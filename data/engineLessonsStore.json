@@ -1,0 +1,159 @@
+{
+  "updatedAt": "2026-09-19T06:59:51.173Z",
+  "lessons": [
+    {
+      "ruleKey": "full-day-connectivity",
+      "rule": "EVERY activity (Learning, SD, Coding, Speak, Case, Agent, Placement, Homework, Project Build) must name the student's problem in 1 line and say how today's work applies to building that product. Never leave a slot as generic practice with no project link.",
+      "sourceFeedback": "Redo Tonight's Homework only: simpler beginner wording, clear A→B→C night path, keep Learning→SD→LC→Case→Project connectivity, Easy-leaning LC for early years, short Apply notes with Why. Complete Agent Workbench steps. Do not invent fake URLs.",
+      "surface": "homework",
+      "tags": [
+        "connectivity",
+        "project"
+      ],
+      "active": true,
+      "hitCount": 4,
+      "updatedAt": "2026-08-18T10:24:29.598Z"
+    },
+    {
+      "ruleKey": "feedback-483a4e573b0056ff",
+      "rule": "Faculty feedback (obey forever on new plans + refine): Case study and LeetCode feel disconnected from the problem statement — need full connectivity",
+      "sourceFeedback": "Case study and LeetCode feel disconnected from the problem statement — need full connectivity",
+      "surface": "daily",
+      "tags": [
+        "feedback"
+      ],
+      "active": true,
+      "hitCount": 1,
+      "updatedAt": "2026-07-31T04:41:33.813Z"
+    },
+    {
+      "ruleKey": "baseline-slot-roles",
+      "rule": "Slot roles: Problem Review=read DT page/topic meaning; Learning=study concept+links; Problem Lab=write DT answers ONLY HERE; Project Build=apply learning to project; Mini Build=small extension of Project Build.",
+      "sourceFeedback": "baseline quality contract",
+      "surface": "daily",
+      "tags": [
+        "baseline",
+        "slots"
+      ],
+      "active": true,
+      "hitCount": 68,
+      "updatedAt": "2026-09-19T06:59:50.952Z"
+    },
+    {
+      "ruleKey": "baseline-no-fake-urls",
+      "rule": "No fake/placeholder URLs. Prefer curated verified links; else Search: <query>.",
+      "sourceFeedback": "baseline quality contract",
+      "surface": "all",
+      "tags": [
+        "baseline",
+        "links"
+      ],
+      "active": true,
+      "hitCount": 68,
+      "updatedAt": "2026-09-19T06:59:50.989Z"
+    },
+    {
+      "ruleKey": "baseline-leetcode-unique",
+      "rule": "LeetCode numbers never repeat across the full plan — use inputs._planUsedLc.",
+      "sourceFeedback": "baseline quality contract",
+      "surface": "all",
+      "tags": [
+        "baseline",
+        "leetcode"
+      ],
+      "active": true,
+      "hitCount": 68,
+      "updatedAt": "2026-09-19T06:59:51.024Z"
+    },
+    {
+      "ruleKey": "baseline-placement-rotation",
+      "rule": "Placement Prep every weekday: Mon Intro, Tue STAR, Wed Technical, Thu Why company, Fri Mock. Company from TARGET_COMPANY.",
+      "sourceFeedback": "baseline quality contract",
+      "surface": "daily",
+      "tags": [
+        "baseline",
+        "placement"
+      ],
+      "active": true,
+      "hitCount": 68,
+      "updatedAt": "2026-09-19T06:59:51.061Z"
+    },
+    {
+      "ruleKey": "baseline-friday-review",
+      "rule": "Friday ends with Weekly Review (shipped / incomplete / differently / next week). Week 2 Friday also Sprint Demo.",
+      "sourceFeedback": "baseline quality contract",
+      "surface": "daily",
+      "tags": [
+        "baseline",
+        "weekly"
+      ],
+      "active": true,
+      "hitCount": 68,
+      "updatedAt": "2026-09-19T06:59:51.105Z"
+    },
+    {
+      "ruleKey": "baseline-full-connectivity",
+      "rule": "PRODUCT CONNECTIVITY (mandatory): Every slot must include the student's problem glance (or 'your project') and one concrete Apply line — Learning, System Design, Coding Practice, Speak & Solve, Refresh case, Placement, Agent, Homework LeetCode/Case. Case studies must end with: how this case changes ONE decision in YOUR product.",
+      "sourceFeedback": "baseline quality contract",
+      "surface": "all",
+      "tags": [
+        "baseline",
+        "connectivity",
+        "project"
+      ],
+      "active": true,
+      "hitCount": 68,
+      "updatedAt": "2026-09-19T06:59:51.139Z"
+    },
+    {
+      "ruleKey": "baseline-day-night-lc",
+      "rule": "When DSA ON: day Coding Practice + night Homework LC = same pattern family → Apply to problem. When DSA OFF: night LC still Apply-to-project.",
+      "sourceFeedback": "baseline quality contract",
+      "surface": "daily",
+      "tags": [
+        "baseline",
+        "leetcode",
+        "connectivity"
+      ],
+      "active": true,
+      "hitCount": 68,
+      "updatedAt": "2026-09-19T06:59:51.173Z"
+    },
+    {
+      "ruleKey": "feedback-0cc7ade19529d296",
+      "rule": "Faculty feedback (obey forever on new plans + refine): i need the proper link for the reference material and also - system design give proper concept and topics names . the data you gave me now , it seems to be  very generic",
+      "sourceFeedback": "i need the proper link for the reference material and also - system design give proper concept and topics names . the data you gave me now , it seems to be  very generic",
+      "surface": "daily",
+      "tags": [
+        "feedback"
+      ],
+      "active": true,
+      "hitCount": 1,
+      "updatedAt": "2026-08-07T06:07:26.139Z"
+    },
+    {
+      "ruleKey": "no-fake-resource-urls",
+      "rule": "Never invent URLs. Use curated/verified free links only. If no confirmed URL exists, write Search: <query> — never a fake host or watch?v=example.",
+      "sourceFeedback": "Redo Tonight's Homework only: simpler beginner wording, clear A→B→C night path, keep Learning→SD→LC→Case→Project connectivity, Easy-leaning LC for early years, short Apply notes with Why. Complete Agent Workbench steps. Do not invent fake URLs.",
+      "surface": "homework",
+      "tags": [
+        "links"
+      ],
+      "active": true,
+      "hitCount": 3,
+      "updatedAt": "2026-08-18T10:24:29.550Z"
+    },
+    {
+      "ruleKey": "feedback-ebc571ccf396d1b7",
+      "rule": "Faculty feedback (obey forever on new plans + refine): Redo Tonight's Homework only: simpler beginner wording, clear A→B→C night path, keep Learning→SD→LC→Case→Project connectivity, Easy-leaning LC for early years, short Apply notes with Why. Complete Agent Workbench steps. Do not invent fake URLs.",
+      "sourceFeedback": "Redo Tonight's Homework only: simpler beginner wording, clear A→B→C night path, keep Learning→SD→LC→Case→Project connectivity, Easy-leaning LC for early years, short Apply notes with Why. Complete Agent Workbench steps. Do not invent fake URLs.",
+      "surface": "homework",
+      "tags": [
+        "feedback"
+      ],
+      "active": true,
+      "hitCount": 3,
+      "updatedAt": "2026-08-18T10:24:29.645Z"
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+# College / school syllabus — HANDS-ON INPUT (edit this file)
+# Keep it SHORT. Do NOT paste a full university PDF.
+# Planner uses this when Subjects upload is empty.
+#
+# Campus is chosen in the UI dropdown:
+# - SNS College of Technology
+# - SNS College of Engineering
+# - Dr. SNS Rajalakshmi College of Arts & Science
+# - SNS Academy (school · Class 1–12)
+# Then set Year+Sem+Dept (college) or Class+stream (Academy).
+
+COLLEGE_HINT: SNS College of Technology
+DEPARTMENT_HINT: CSE
+YEAR_HINT: 2
+SEMESTER_HINT: 3
+# For SNS Academy use instead:
+# GRADE_HINT: 10
+
+# --- Sem 3 sample topics (replace with your real list) ---
+SUBJECTS:
+- Data Structures — arrays, linked lists, stacks, queues
+- Digital Principles — gates, simple circuits overview
+- Object Oriented Programming — classes, objects, basic inheritance
+- Discrete Mathematics — sets, relations (light)
+- Environmental Science — awareness module (light)
+
+# Topics OK for Learning this Year/Sem (one topic per day max):
+LEARNING_POOL:
+- Arrays and hashing basics
+- Linked list traversal
+- Stack vs queue
+- Class and object
+- Simple REST idea (request / response)
+
+# System Design — keep Year-matched (Y2 = screens + APIs + data, not Kafka):
+SYSTEM_DESIGN_POOL:
+- Client → API → Store overview
+- Users and journeys
+- Screens and inputs
+- Data you must store
+- Three plain-English APIs
+
+# Arts colleges: replace SUBJECTS / pools with your dept list, e.g.
+# - Communication skills
+# - Design thinking workshop
+# - Media writing
+# - Basic digital tools

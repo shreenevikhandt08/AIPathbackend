@@ -1,0 +1,316 @@
+const axios = require("axios");
+const ONLINE_MODEL = "openai/gpt-4o-mini:online";
+
+/** Live search cache keyed by date + filter window */
+const liveCache = {};
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+/** Offline fallback when live search fails */
+const FALLBACK_PROBLEMS = [
+  { title: "AI-powered mental health companion for college students", source: "offline fallback", kind: "live", year: null, isLive: false },
+  { title: "Hyperlocal supply chain for small kirana stores using GenAI", source: "offline fallback", kind: "live", year: null, isLive: false },
+  { title: "Autonomous last-mile delivery for Tier-2/3 cities", source: "offline fallback", kind: "live", year: null, isLive: false },
+  { title: "AI tutoring platform that adapts to regional language learners", source: "offline fallback", kind: "live", year: null, isLive: false },
+  { title: "Carbon credit marketplace for rural farmers in India", source: "offline fallback", kind: "live", year: null, isLive: false },
+  { title: "Healthcare diagnostics using low-cost IoT + ML for rural clinics", source: "offline fallback", kind: "live", year: null, isLive: false },
+  { title: "B2B SaaS for unorganised SME inventory management", source: "offline fallback", kind: "live", year: null, isLive: false },
+  { title: "Voice-first fintech app for first-time smartphone users", source: "offline fallback", kind: "live", year: null, isLive: false },
+];
+
+/**
+ * Curated classic YC + unicorn problem spaces (easy to pick; tagged by year).
+ * Titles are student-ready problem statements inspired by real companies.
+ */
+const CLASSIC_PROBLEMS = [
+  // Early YC
+  { title: "Peer marketplace for short-term stays that strangers trust enough to book", source: "YC W09 — Airbnb", kind: "yc", year: 2009, batch: "W09", month: 1 },
+  { title: "Link-sharing community where the crowd ranks what is worth reading", source: "YC S05 — Reddit", kind: "yc", year: 2005, batch: "S05", month: 6 },
+  { title: "Dropbox-style sync: keep files identical across every device without manual copy", source: "YC S07 — Dropbox", kind: "yc", year: 2007, batch: "S07", month: 6 },
+  { title: "Developer-first payments API that any website can add checkout in a day", source: "YC S09 — Stripe", kind: "yc", year: 2009, batch: "S09", month: 6 },
+  { title: "Twitch-style live streaming where creators earn while fans watch together", source: "YC W07 — Justin.tv / Twitch roots", kind: "yc", year: 2007, batch: "W07", month: 1 },
+  { title: "DoorDash-style local delivery that connects restaurants to nearby hungry customers", source: "YC S13 — DoorDash", kind: "yc", year: 2013, batch: "S13", month: 6 },
+  { title: "Coinbase-style on-ramp so beginners can buy crypto safely without a bank headache", source: "YC S12 — Coinbase", kind: "yc", year: 2012, batch: "S12", month: 6 },
+  { title: "Instacart-style grocery shopping with personal shoppers for busy households", source: "YC S12 — Instacart", kind: "yc", year: 2012, batch: "S12", month: 6 },
+  { title: "GitLab-style single place for code, review, and deploy for student project teams", source: "YC W15 — GitLab", kind: "yc", year: 2015, batch: "W15", month: 1 },
+  { title: "Rappi/Gojek-style super-app for food, rides, and payments in one city", source: "YC / LatAm unicorns", kind: "yc", year: 2018, batch: null, month: 6 },
+  { title: "Notion-style all-in-one notes + docs + tasks for college project teams", source: "YC W16 — Notion", kind: "yc", year: 2016, batch: "W16", month: 1 },
+  { title: "Zapier-style no-code glue that connects campus tools without writing APIs", source: "YC S12 — Zapier", kind: "yc", year: 2012, batch: "S12", month: 6 },
+  { title: "Figma-style collaborative design board where many people edit one screen live", source: "YC W13 — Figma", kind: "yc", year: 2013, batch: "W13", month: 1 },
+  { title: "Brex-style spend card + dashboard for student clubs and startup teams", source: "YC W17 — Brex", kind: "yc", year: 2017, batch: "W17", month: 1 },
+  { title: "Scale AI-style labeling pipeline so ML teams get clean training data fast", source: "YC S16 — Scale AI", kind: "yc", year: 2016, batch: "S16", month: 6 },
+  { title: "Retool-style internal tools builder for ops dashboards without a full frontend", source: "YC W17 — Retool", kind: "yc", year: 2017, batch: "W17", month: 1 },
+  { title: "Rippling-style HR + IT onboarding that sets up people and apps in one flow", source: "YC W17 — Rippling", kind: "yc", year: 2017, batch: "W17", month: 1 },
+  { title: "Webflow-style visual site builder that ships real production sites", source: "YC S13 — Webflow", kind: "yc", year: 2013, batch: "S13", month: 6 },
+  { title: "Gusto-style payroll + compliance for small businesses that hate paperwork", source: "YC W12 — Gusto", kind: "yc", year: 2012, batch: "W12", month: 1 },
+  { title: "Cruise/self-drive safety stack: perception + maps for campus shuttle autonomy", source: "YC W14 — Cruise", kind: "yc", year: 2014, batch: "W14", month: 1 },
+  // Recent YC / unicorn-inspired (through present)
+  { title: "AI coding agent that ships small PRs from a natural-language ticket", source: "YC / AI tooling (~2023)", kind: "yc", year: 2023, batch: null, month: 6 },
+  { title: "Vertical LLM app that turns messy PDFs into a searchable company brain", source: "YC / RAG startups (~2023)", kind: "yc", year: 2023, batch: null, month: 3 },
+  { title: "Campus marketplace for peer tutoring matched by course + availability", source: "YC / EdTech (~2019)", kind: "yc", year: 2019, batch: null, month: 6 },
+  { title: "No-code agent builder that wires tools and APIs without writing glue code", source: "YC / Agents (~2024)", kind: "yc", year: 2024, batch: null, month: 6 },
+  { title: "Climate MRV dashboard that proves carbon impact with sensor + satellite data", source: "YC / Climate (~2021)", kind: "yc", year: 2021, batch: null, month: 6 },
+  { title: "Healthcare prior-auth bot that cuts hospital paperwork using clinical notes", source: "YC / HealthTech (~2022)", kind: "yc", year: 2022, batch: null, month: 3 },
+  { title: "Creator commerce storefront that turns short videos into checkout in one tap", source: "YC / Social commerce (~2020)", kind: "yc", year: 2020, batch: null, month: 6 },
+  { title: "DevSecOps scanner that finds secrets and risky deps before every student push", source: "YC / Security (~2021)", kind: "yc", year: 2021, batch: null, month: 1 },
+  { title: "Voice AI receptionist that books campus clinic appointments without hold music", source: "YC / Voice AI (~2024)", kind: "yc", year: 2024, batch: null, month: 9 },
+  { title: "Multimodal study coach that explains whiteboard photos step by step", source: "YC / Ed AI (~2025)", kind: "yc", year: 2025, batch: null, month: 3 },
+  { title: "Agentic research workspace that cites sources while drafting a problem brief", source: "YC / Agents (~2026)", kind: "yc", year: 2026, batch: null, month: 1 },
+  // Unicorns (broader)
+  { title: "Uber-style matching of idle drivers with riders who need a ride now", source: "Unicorn — Uber (~2010)", kind: "unicorn", year: 2010, month: 6 },
+  { title: "Spotify-style music streaming with playlists that feel personal every day", source: "Unicorn — Spotify (~2008)", kind: "unicorn", year: 2008, month: 10 },
+  { title: "Canva-style design tool so non-designers make posters in minutes", source: "Unicorn — Canva (~2012)", kind: "unicorn", year: 2012, month: 1 },
+  { title: "Byju's-style adaptive video lessons that track what a student still misses", source: "Unicorn — BYJU'S (~2011)", kind: "unicorn", year: 2011, month: 8 },
+  { title: "Swiggy-style food ordering with live ETA for Tier-1 and Tier-2 cities", source: "Unicorn — Swiggy (~2014)", kind: "unicorn", year: 2014, month: 8 },
+  { title: "Razorpay-style payment collection for Indian startups and campus clubs", source: "Unicorn — Razorpay (~2014)", kind: "unicorn", year: 2014, month: 1 },
+  { title: "PhonePe/UPI-style peer payments that work with any bank account", source: "Unicorn — PhonePe (~2015)", kind: "unicorn", year: 2015, month: 12 },
+  { title: "Zerodha-style low-cost investing app that explains markets simply", source: "Unicorn — Zerodha (~2010)", kind: "unicorn", year: 2010, month: 8 },
+  { title: "Meesho-style social commerce so small resellers sell without inventory", source: "Unicorn — Meesho (~2015)", kind: "unicorn", year: 2015, month: 12 },
+  { title: "Freshworks-style CRM that small teams can set up without Salesforce complexity", source: "Unicorn — Freshworks (~2010)", kind: "unicorn", year: 2010, month: 10 },
+  { title: "Databricks-style lakehouse so teams analyze huge logs without a data-center PhD", source: "Unicorn — Databricks (~2013)", kind: "unicorn", year: 2013, month: 1 },
+  { title: "OpenAI-style chat assistant that answers campus FAQs with citations", source: "Unicorn — OpenAI (~2015)", kind: "unicorn", year: 2015, month: 12 },
+  { title: "SpaceX-style ops dashboard for telemetry of a complex multi-stage system", source: "Unicorn — SpaceX (~2002)", kind: "unicorn", year: 2002, month: 3 },
+  { title: "Discord-style voice + text rooms for study groups and gaming clubs", source: "Unicorn — Discord (~2015)", kind: "unicorn", year: 2015, month: 5 },
+  { title: "Shopify-style storefront that lets anyone sell products online in a day", source: "Unicorn — Shopify (~2006)", kind: "unicorn", year: 2006, month: 6 },
+  { title: "Zoom-style reliable video calls that stay clear on weak college Wi‑Fi", source: "Unicorn — Zoom (~2011)", kind: "unicorn", year: 2011, month: 4 },
+  { title: "ChatGPT-style general assistant that drafts, explains, and brainstorms for students", source: "Unicorn — OpenAI ChatGPT (~2022)", kind: "unicorn", year: 2022, month: 11 },
+  { title: "Notion AI-style workspace that summarizes meeting notes into action items", source: "Unicorn / Notion AI (~2023)", kind: "unicorn", year: 2023, month: 2 },
+  { title: "Perplexity-style answer engine that cites the web for every claim", source: "Unicorn — Perplexity (~2022)", kind: "unicorn", year: 2022, month: 8 },
+  { title: "Cursor-style AI pair programmer that edits a whole repo from a chat prompt", source: "Unicorn / AI IDE (~2023)", kind: "unicorn", year: 2023, month: 6 },
+  { title: "Midjourney-style image studio that turns a sentence into campaign art", source: "Unicorn / GenAI media (~2022)", kind: "unicorn", year: 2022, month: 7 },
+  { title: "Stripe Atlas-style launch kit that helps a student team incorporate and invoice", source: "Unicorn — Stripe ecosystem (~2019)", kind: "unicorn", year: 2019, month: 3 },
+  { title: "Figma AI-style layout helper that proposes clean UI from a rough wireframe", source: "Unicorn — Figma AI (~2024)", kind: "unicorn", year: 2024, month: 6 },
+  { title: "Anthropic-style safe assistant that refuses harmful campus-admin workflows", source: "Unicorn — Anthropic (~2021)", kind: "unicorn", year: 2021, month: 5 },
+  { title: "xAI-style research chat that challenges weak assumptions in a problem statement", source: "Unicorn — xAI (~2023)", kind: "unicorn", year: 2023, month: 7 },
+  { title: "Groq-style ultra-low-latency inference API for campus demo day demos", source: "Unicorn — Groq (~2021)", kind: "unicorn", year: 2021, month: 1 },
+  { title: "Hugging Face-style model hub where teams share fine-tunes for class projects", source: "Unicorn — Hugging Face (~2021)", kind: "unicorn", year: 2021, month: 4 },
+];
+
+/** Year options for Live / Classic / Live+Classic filters — through the present calendar year. */
+function buildYearOptions() {
+  const now = new Date().getFullYear();
+  const classicYears = CLASSIC_PROBLEMS.map((p) => Number(p.year)).filter((y) => Number.isFinite(y));
+  const earliest = classicYears.length ? Math.min(...classicYears) : 2005;
+  const start = Math.min(earliest, 2005);
+  const years = [];
+  for (let y = now; y >= start; y -= 1) years.push(y);
+  return years;
+}
+
+function cacheKey(opts = {}) {
+  const mode = opts.mode || "live";
+  const window = opts.window || "recent";
+  const year = opts.year || "any";
+  const month = opts.month || "any";
+  return `${todayKey()}|${mode}|${window}|${year}|${month}`;
+}
+
+function filterClassic(opts = {}) {
+  const kind = String(opts.kind || "all").toLowerCase();
+  const year = opts.year != null && opts.year !== "" ? Number(opts.year) : null;
+  const month = opts.month != null && opts.month !== "" ? Number(opts.month) : null;
+
+  return CLASSIC_PROBLEMS.filter((p) => {
+    if (kind === "yc" && p.kind !== "yc") return false;
+    if (kind === "unicorn" && p.kind !== "unicorn") return false;
+    if (year && Number(p.year) !== year) return false;
+    if (month && Number(p.month) !== month) return false;
+    return true;
+  }).map((p) => ({
+    title: p.title,
+    source: p.source,
+    kind: p.kind,
+    year: p.year,
+    month: p.month || null,
+    batch: p.batch || null,
+    isLive: false,
+  }));
+}
+
+function windowPrompt(window, year, month) {
+  if (year && month) {
+    return `Focus on YC batches and unicorn stories from ${year}-${String(month).padStart(2, "0")} (that calendar month), plus nearby context if needed.`;
+  }
+  if (year) {
+    return `Focus on Y Combinator batches and unicorn startups from the year ${year}.`;
+  }
+  if (window === "month") {
+    return "Focus on YC / unicorn announcements from the last 30 days.";
+  }
+  if (window === "quarter") {
+    return "Focus on YC / unicorn announcements from the last 3 months.";
+  }
+  if (window === "year") {
+    return "Focus on YC / unicorn announcements from the last 12 months.";
+  }
+  return "Focus on the most recent YC batch / Demo Day and unicorns from the last few months.";
+}
+
+async function searchLiveProblems(opts = {}) {
+  const focus = windowPrompt(opts.window || "recent", opts.year, opts.month);
+  const kindHint =
+    opts.kind === "yc"
+      ? "Prefer Y Combinator company problems."
+      : opts.kind === "unicorn"
+        ? "Prefer unicorn / late-stage startup problems."
+        : "Mix Y Combinator and unicorn problems.";
+
+  const prompt = `
+Search the web right now for real Y Combinator and unicorn startup problems.
+${focus}
+${kindHint}
+
+1. Recent or specified-period YC batch companies and the problems they solve
+2. Unicorn startups (new or classic in that period) and the real-world problems they solve
+
+Also include 2–3 well-known older YC/unicorn problem spaces if they still teach a strong product lesson.
+
+Produce 8 short problem-space ideas suitable for a college engineering student project.
+Each idea must be INSPIRED BY a real company — name the company/batch/year in "source".
+
+Return ONLY this JSON, no markdown, no commentary:
+{
+  "problems": [
+    { "title": "short problem statement, startup-style, <18 words", "source": "Company · YC batch or Unicorn · year", "kind": "yc|unicorn", "year": 2024 }
+  ]
+}
+Return exactly 8 items.
+`.trim();
+
+  const clampedTokens = Math.min(1000, 4096);
+  const response = await axios.post(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      model: "openai/gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+      max_tokens: clampedTokens,
+    },
+    // {
+    //   model: ONLINE_MODEL,
+    //   messages: [{ role: "user", content: prompt }],
+    //   temperature: 0.6,
+    //   max_tokens: 1000,
+    // },
+    {
+      headers: {
+        Authorization: "Bearer " + process.env.OPENROUTER_API_KEY,
+        "Content-Type": "application/json",
+      },
+      timeout: 35001,
+    }
+  );
+
+  const raw = response.data.choices?.[0]?.message?.content || "";
+  const cleaned = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
+  const match = cleaned.match(/(\{[\s\S]*\})/);
+  const parsed = JSON.parse(match ? match[1] : cleaned);
+
+  const problems = Array.isArray(parsed.problems) ? parsed.problems : [];
+  if (!problems.length) throw new Error("Empty problems array from search");
+
+  return problems.slice(0, 8).map((p) => ({
+    title: String(p.title || "").trim(),
+    source: String(p.source || "web search").trim(),
+    kind: /unicorn/i.test(String(p.kind || p.source || "")) ? "unicorn" : "yc",
+    year: p.year != null ? Number(p.year) : null,
+    month: null,
+    isLive: true,
+  }));
+}
+
+/**
+ * @param {boolean} forceRefresh
+ * @param {{ mode?: 'live'|'classic'|'all', kind?: 'yc'|'unicorn'|'all', year?: number|null, month?: number|null, window?: string }} opts
+ */
+async function getYCUnicornProblems(forceRefresh = false, opts = {}) {
+  const mode = String(opts.mode || "all").toLowerCase();
+  const kind = String(opts.kind || "all").toLowerCase();
+  const year = opts.year != null && opts.year !== "" ? Number(opts.year) : null;
+  const month = opts.month != null && opts.month !== "" ? Number(opts.month) : null;
+  const window = opts.window || "recent";
+  const key = todayKey();
+
+  const classic = filterClassic({ kind, year, month });
+  const years = buildYearOptions();
+
+  // Classic-only: no live call
+  if (mode === "classic") {
+    const data = classic.length ? classic.slice(0, 16) : CLASSIC_PROBLEMS.slice(0, 12).map((p) => ({
+      title: p.title, source: p.source, kind: p.kind, year: p.year, month: p.month, isLive: false,
+    }));
+    return {
+      data,
+      isLive: false,
+      generatedDate: key,
+      cached: false,
+      mode: "classic",
+      kind,
+      year,
+      month,
+      years,
+      classicCount: CLASSIC_PROBLEMS.length,
+    };
+  }
+
+  // Live (and all = live + classics mixed for easy picking)
+  const cKey = cacheKey({ mode: "live", window, year, month, kind });
+  let live = null;
+  let isLive = false;
+  let cached = false;
+
+  if (!forceRefresh && liveCache[cKey]) {
+    live = liveCache[cKey].data;
+    isLive = liveCache[cKey].isLive;
+    cached = true;
+  } else {
+    try {
+      live = await searchLiveProblems({ window, year, month, kind });
+      liveCache[cKey] = { data: live, isLive: true };
+      isLive = true;
+    } catch (err) {
+      console.error("ycSearch live fetch failed:", err.message);
+      live = FALLBACK_PROBLEMS;
+      isLive = false;
+    }
+  }
+
+  let data;
+  if (mode === "live") {
+    data = live;
+  } else {
+    // all: live first, then classic picks (dedupe by title)
+    const seen = new Set();
+    data = [];
+    for (const p of [...live, ...classic]) {
+      const t = String(p.title || "").toLowerCase();
+      if (!t || seen.has(t)) continue;
+      seen.add(t);
+      data.push(p);
+      if (data.length >= 16) break;
+    }
+  }
+
+  return {
+    data,
+    isLive,
+    generatedDate: key,
+    cached,
+    mode,
+    kind,
+    year,
+    month,
+    window,
+    years,
+    classicCount: CLASSIC_PROBLEMS.length,
+  };
+}
+
+module.exports = {
+  getYCUnicornProblems,
+  CLASSIC_PROBLEMS,
+  FALLBACK_PROBLEMS,
+  buildYearOptions,
+};
