@@ -5,13 +5,12 @@ const mongoose = require("mongoose");
 const User   = require("../models/User");
 const {
   loginWithOkrion,
-  checkOkrionUserExists,
-  createOkrionUser,
   listOkrionInstitutions,
   listOkrionDepartments,
 } = require("../services/okrionSsoService");
 
 const JWT_SECRET = process.env.JWT_SECRET || "academic_planner_secret_key";
+const OKRION_REGISTER_URL = process.env.OKRION_REGISTER_URL || "https://app.okrion.ai/select-role";
 
 function passwordMeetsRules(password) {
   const p = String(password || "");
@@ -96,94 +95,12 @@ async function upsertOkrionUser(okrionUser, role) {
 }
 
 async function signup(req, res) {
-  try {
-    const {
-      fullName,
-      initials,
-      firstName,
-      lastName,
-      name,
-      email,
-      password,
-      phone,
-      role,
-      department,
-      course,
-      year,
-      designation,
-      institutionId,
-      institutionName,
-      registerNumber,
-    } = req.body || {};
-    const normalizedEmail = normalizeEmail(email);
-    const normalizedRole = String(role || "student").trim().toLowerCase();
-    const resolvedFirstName = String(fullName || firstName || name || "").trim();
-    const resolvedInitials = String(initials || lastName || "").trim();
-
-    if (!resolvedFirstName || !resolvedInitials || !normalizedEmail || !password || !normalizedRole) {
-      return res.status(400).json({ success: false, error: "Full name, initials, email, password, and role are required" });
-    }
-    if (!["student", "faculty"].includes(normalizedRole)) {
-      return res.status(400).json({ success: false, error: "Role must be student or faculty" });
-    }
-    if (!institutionName) {
-      return res.status(400).json({ success: false, error: "Institution name is required" });
-    }
-    if (!department) {
-      return res.status(400).json({ success: false, error: "Department/Wings is required" });
-    }
-    if (!phone) {
-      return res.status(400).json({ success: false, error: "Phone number is required" });
-    }
-    if (normalizedRole === "student" && !registerNumber) {
-      return res.status(400).json({ success: false, error: "Register number is required" });
-    }
-    if (!passwordMeetsRules(password))
-      return res.status(400).json({
-        success: false,
-        error: "Password must be 9+ characters with uppercase, lowercase, and a number",
-      });
-
-    const existing = await checkOkrionUserExists(normalizedEmail);
-    if (existing?.exists) {
-      return res.status(409).json({
-        success: false,
-        code: "OKRION_USER_EXISTS",
-        error: "This account already exists in OKRion. Please sign in directly.",
-      });
-    }
-
-    const created = await createOkrionUser({
-      email: normalizedEmail,
-      password,
-      firstName: resolvedFirstName,
-      lastName: resolvedInitials,
-      phone,
-      role: normalizedRole,
-      institutionId,
-      department,
-      course: course || department,
-      year,
-      designation,
-      institutionName,
-      registerNumber,
-      appName: "aipathbuilder",
-    });
-    const createdUser = created?.user;
-    const aiPathRole = getAllowedAiPathRole(createdUser) || normalizedRole;
-    let localUser = null;
-    if (createdUser) {
-      localUser = await upsertOkrionUser(createdUser, aiPathRole);
-    }
-
-    res.json({
-      success: true,
-      message: "Account created in OKRion. Please sign in with your OKRion credentials.",
-      user: localUser ? toClientUser(localUser) : undefined,
-    });
-  } catch (err) {
-    res.status(err.status || 500).json({ success: false, error: err.message });
-  }
+  return res.status(410).json({
+    success: false,
+    code: "REGISTRATION_MANAGED_BY_OKRION",
+    error: "Registration is managed in OKRion. Please register there, then sign in here with your OKRion credentials.",
+    redirectUrl: OKRION_REGISTER_URL,
+  });
 }
 
 async function signupInstitutions(_req, res) {
