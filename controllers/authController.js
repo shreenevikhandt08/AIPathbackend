@@ -162,7 +162,10 @@ async function login(req, res) {
       user: toClientUser(user),
     });
   } catch (err) {
-    res.status(err.status || 500).json({ success: false, error: err.message });
+    console.error("LOGIN failed:", err.message);
+    const payload = { success: false, error: err.message };
+    if (err.code) payload.code = err.code;
+    res.status(err.status || 500).json(payload);
   }
 }
 

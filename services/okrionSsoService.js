@@ -14,6 +14,29 @@ function getConfig() {
   return { baseUrl, internalKey };
 }
 
+function ssoHostLabel() {
+  try {
+    return new URL(String(process.env.OKRION_SSO_BASE_URL || "")).host || "OKRION_SSO_BASE_URL";
+  } catch {
+    return "OKRION_SSO_BASE_URL";
+  }
+}
+
+function isSsoNetworkError(error) {
+  if (error?.response) return false;
+  const code = String(error?.code || "");
+  const msg = String(error?.message || "");
+  return (
+    code === "ECONNABORTED" ||
+    code === "ETIMEDOUT" ||
+    code === "ENOTFOUND" ||
+    code === "ECONNREFUSED" ||
+    code === "ECONNRESET" ||
+    code === "EAI_AGAIN" ||
+    /timeout/i.test(msg)
+  );
+}
+
 function client() {
   const { baseUrl, internalKey } = getConfig();
   return axios.create({
@@ -39,6 +62,15 @@ function assertJsonPayload(data, endpointLabel) {
 }
 
 function normalizeSsoError(error, fallback = "OKRion SSO request failed") {
+  if (isSsoNetworkError(error)) {
+    const normalized = new Error(
+      `Cannot reach OKRion SSO at ${ssoHostLabel()}. Start the OKRion server or Dev Tunnel, then retry login.`
+    );
+    normalized.status = 502;
+    normalized.code = "SSO_UNREACHABLE";
+    return normalized;
+  }
+
   const status = error?.response?.status || 500;
   const message =
     error?.response?.data?.message ||
@@ -47,8 +79,27 @@ function normalizeSsoError(error, fallback = "OKRion SSO request failed") {
     fallback;
   const normalized = new Error(message);
   normalized.status = status;
+  normalized.code = error?.response?.data?.code || (status >= 500 ? "SSO_ERROR" : undefined);
   normalized.details = error?.response?.data || null;
   return normalized;
+}
+
+async function pingOkrionSso() {
+  const { baseUrl, internalKey } = getConfig();
+  try {
+    await axios.get(baseUrl, {
+      timeout: 5000,
+      validateStatus: () => true,
+      headers: { "x-internal-key": internalKey, Accept: "application/json" },
+    });
+    console.log(`OKRion SSO reachable → ${baseUrl}`);
+    return true;
+  } catch (error) {
+    console.warn(
+      `OKRion SSO not reachable → ${ssoHostLabel()}: ${error.message} (login will fail until this is up)`
+    );
+    return false;
+  }
 }
 
 async function loginWithOkrion(email, password) {
@@ -104,4 +155,5 @@ module.exports = {
   createOkrionUser,
   listOkrionInstitutions,
   listOkrionDepartments,
+  pingOkrionSso,
 };

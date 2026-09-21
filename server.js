@@ -135,3 +135,5 @@ s3.verifyBucket().then((info) => {
   if (info.ok) console.log(`S3 reachable → ${info.bucket}`);
   else console.warn(`S3 not reachable → ${info.bucket}: ${info.reason}`);
 });
+const { pingOkrionSso } = require("./services/okrionSsoService");
+pingOkrionSso().catch((err) => console.warn("OKRion SSO check failed:", err.message));
