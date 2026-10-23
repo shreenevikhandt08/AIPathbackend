@@ -9,7 +9,18 @@ const {
 const { buildAssessmentPromptBlock } = require("./assessmentPicker");
 const { buildAcademicPromptBlock } = require("./academicLevel");
 const { enforceDayConnectivity } = require("./connectivityEnforcer");
+const {
+  normalizeForceOverride,
+  mustApplyPromptSection,
+  forceApplyOn,
+} = require("./forceOverride");
+const {
+  applyScheduleOverridesToDailyRows,
+  dailyCustomisationPromptSection,
+  parseActivityBlueprint,
+} = require("./scheduleOverrides");
 function buildDailyDayPrompt(dayName, theme, inputs, examAnalysis, focusOverride, dayKey, globalDayIndex = 0, daySlice = null) {
+  inputs = normalizeForceOverride(inputs || {});
   const resolvedDayKey = dayKey || `Week ${theme.week} - ${dayName}`;
   // Map UI "Current Stage" → playbook day so the schedule is stage-precise.
   const activeStageKey = inputs?._activeDTStage || inputs?.activeDTStage || null;
@@ -18,6 +29,12 @@ function buildDailyDayPrompt(dayName, theme, inputs, examAnalysis, focusOverride
   const empathyDay = isEmpathyDefineStage(dtStep);
   const pitchDay = isPitchBmcStage(dtStep);
   const evaluateDay = isEvaluateStage(dtStep);
+  const activityLayout = dailyCustomisationPromptSection(inputs);
+  const hasBlueprint = Boolean(parseActivityBlueprint(inputs)?.daily?.length);
+  const clockNote =
+    `Clocks in plan cells: 12-hour IST only (e.g. 9:00–9:15 AM IST). ` +
+    `Honour _timeFormat=${String(inputs?._timeFormat || "12h")} and _timezone=IST. ` +
+    `Never 09:00-09:15, never UTC/GMT.`;
 
   // Dream / target company from solo or team profile (if provided)
   let inputsCompany = "";
@@ -81,8 +98,12 @@ function buildDailyDayPrompt(dayName, theme, inputs, examAnalysis, focusOverride
   const sub3 = todaySubjects[2] || todaySubjects[0];
   const sub4 = todaySubjects[3] || todaySubjects[0];
 
-  return (
-    `You are designing a REALISTIC one-day college schedule for ENGINEERING STUDENTS (IST, college hours 08:45–04:30 only).\n\n` +
+  const sharedDailyPromptHead =
+    `You are designing a REALISTIC one-day college schedule for ENGINEERING STUDENTS ` +
+    `(IST${hasBlueprint ? " — layout from activity blueprint only" : ", college hours 08:45–04:30 only"}).\n` +
+    `${clockNote}\n\n` +
+    // Activity layout early; Must apply is appended LAST at the end of this prompt
+    (activityLayout || "") +
     (String(inputs?._engineLessonsBlock || "").trim()
       ? `${String(inputs._engineLessonsBlock).trim()}\n\n`
       : "") +
@@ -100,9 +121,12 @@ function buildDailyDayPrompt(dayName, theme, inputs, examAnalysis, focusOverride
     `KEY RULES:\n` +
     `0. Obey ENGINE QUALITY LESSONS above — never repeat past refine mistakes.\n` +
     `1. Cover ONLY the ${todayCount} topic${todayCount === 1 ? "" : "s"} listed below for today — no more, no fewer.\n` +
-    `2. REALISTIC timing: each subject gets 40–45 min of proper teaching. NO time gaps between rows — ` +
-    `each row's end time MUST equal the next row's start time (continuous 08:45→04:30).\n` +
-    `3. ALL tasks WITHIN college hours (08:45–04:30). ZERO after-college tasks, ZERO "in your free time" bullets.\n` +
+    (hasBlueprint
+      ? `2. TIMING: use ONLY the periods and start/end times from the activity blueprint above. Write clocks as 12-hour IST (e.g. 9:00–9:15 AM IST). Do not invent extra periods.\n` +
+        `3. Do NOT start from a canned 9–6 / OKR day. ZERO periods not listed in the blueprint.\n`
+      : `2. REALISTIC timing: each subject gets 40–45 min of proper teaching. NO time gaps between rows — ` +
+        `each row's end time MUST equal the next row's start time (continuous 08:45→04:30).\n` +
+        `3. ALL tasks WITHIN college hours (08:45–04:30). ZERO after-college tasks, ZERO "in your free time" bullets.\n`) +
     `4. DAILY CODING PRACTICE: 1 problem on ${slice.codingPlatform} (${slice.codingDifficulty}) — done IN class.\n` +
     (nonCodeDt
       ? `5. DT RESEARCH DAY (${empathyDay ? "Empathize & Define" : "Pitch & BMC"}): Academic Learning still happens, ` +
@@ -132,7 +156,23 @@ function buildDailyDayPrompt(dayName, theme, inputs, examAnalysis, focusOverride
     `- Slow/Steady: Easy coding only, fewer steps. Fast: finish core then one extra.\n` +
     (skipBanks
       ? `\nASSESSMENT BANKS: OFF — still use the student's Assess text (goals, strengths, likes) in Speak & Solve and Mini Build.\n`
-      : assessment.block) +
+      : assessment.block);
+
+  if (hasBlueprint) {
+    return (
+      sharedDailyPromptHead +
+      `\nGENERATE ONE ROW PER activity-blueprint period ONLY, in that exact order, with those start/end times.\n` +
+      `Do not add OKR, extra games, extra learning, or any period not listed.\n` +
+      `Write Time column as 12-hour IST (e.g. "9:00–9:15 AM IST"). Never zero-padded 09:00, never UTC/GMT.\n` +
+      `Return ONLY valid JSON — content is a JSON array of short bullet strings:\n` +
+      `{"rows":[["${resolvedDayKey}","9:00–9:15 AM IST","Stand-Up",["<bullet>","<bullet>"]],…]}\n` +
+      `Column 1 always "${resolvedDayKey}". Row count = number of blueprint periods.\n` +
+      mustApplyPromptSection(inputs)
+    );
+  }
+
+  return (
+    sharedDailyPromptHead +
     `\nGENERATE EXACTLY 13 ROWS in this order:\n\n` +
     `ROW 1 — 08:45–09:00 — Daily Stand-Up + DT Activation (15 min)\n` +
     `  Content (ALL of these bullets — fold Morning Activation INTO stand-up):\n` +
@@ -160,7 +200,7 @@ function buildDailyDayPrompt(dayName, theme, inputs, examAnalysis, focusOverride
         : `  ▶ Heading: Personal check-in\n` +
           `  ▶ Write: DONE · TODAY · STUCK (1 line each).\n` +
           `  ▶ ${guide.standupFocus}\n` +
-          `  ▶ Today's focus preview: ${todaySubjects.map(s => s.name).join(", ")}.\n`) +
+          `  ▶ Today's build hook preview: ${todaySubjects.map(s => s.name).join(", ")} → Project Build pipeline.\n`) +
     `  ▶ Motivation boost line (read aloud once).\n` +
     `\nROW 2 — 09:00–10:30 — Learning (90 min, 45 min per subject)\n` +
     `  TODAY'S ANGLE for both subjects: "${slice.subjectPhase.label}" (${slice.subjectPhase.activity}). ` +
@@ -468,7 +508,8 @@ function buildDailyDayPrompt(dayName, theme, inputs, examAnalysis, focusOverride
       : `- DT Playbook is complete. ROW 8 is an applied build pipeline on the existing project — no Empathize/Define restart.\n`) +
     `- Agent Workbench tasks must be fully defined (title + problem + what + steps + done). Never paste a long problem essay into the agent Problem line — only a short product glance.\n` +
     `- Coding Practice / LeetCode: keep short (pattern + one problem + Apply + Done).\n` +
-    `- Extra Concept line in ROW 8 ONLY when genuinely needed — omit it most days.\n`
+    `- Extra Concept line in ROW 8 ONLY when genuinely needed — omit it most days.\n` +
+    mustApplyPromptSection(inputs)
   );
 }
 
@@ -507,6 +548,89 @@ function normalizeRows(rows) {
     return r;
   });
 }
+
+function ensureHomeworkOnEveryWorkingDay(rows = [], inputs = {}) {
+  if (!Array.isArray(rows) || !rows.length) return rows;
+  let buildHw = null;
+  let isOriginal = () => false;
+  try {
+    ({
+      buildOriginalHomework: buildHw,
+      looksLikeOriginalHomework: isOriginal,
+    } = require("./dayTemplateEngine"));
+  } catch (_) {
+    try {
+      ({ buildConnectedHomework: buildHw } = require("./dayTemplateEngine"));
+    } catch (e) {
+      buildHw = null;
+    }
+  }
+  const out = [];
+  let i = 0;
+  let workingDayIdx = 0;
+  while (i < rows.length) {
+    const dayKey = rows[i][0];
+    const chunk = [];
+    while (i < rows.length && rows[i][0] === dayKey) {
+      chunk.push([...rows[i]]);
+      i += 1;
+    }
+    const holiday = chunk.some((r) =>
+      /holiday|vacation|study holiday/i.test(String(r[2] || ""))
+    );
+    if (holiday) {
+      out.push(...chunk);
+      continue;
+    }
+
+    const learn = chunk.find((r) => /learning|concept|theory/i.test(String(r[2] || "")));
+    const project = chunk.find((r) => /project\s*build|^project$/i.test(String(r[2] || "")));
+    const topic =
+      String(learn?.[3] || "").match(/▶\s*Concept:\s*([^\n]+)/i)?.[1] ||
+      String(learn?.[3] || "").match(/▶\s*What to Learn:\s*([^\n]+)/i)?.[1] ||
+      "today's concept";
+    const buildTask =
+      String(project?.[3] || "").match(/▶\s*Real Project Task:\s*([^\n]+)/i)?.[1] ||
+      String(project?.[3] || "").match(/▶\s*Step:\s*([^\n]+)/i)?.[1] ||
+      "one working slice of their tool";
+    const hwCtx = {
+      inputs,
+      dayKey,
+      dayIdx: workingDayIdx,
+      theme: { learnTopic: topic },
+      dtStep: {
+        step: topic,
+        whatToLearn: topic,
+        realProjectTask: buildTask,
+        stage: String(project?.[3] || "").match(/▶\s*Stage:\s*([^\n]+)/i)?.[1] || "Build",
+      },
+    };
+    const makeHw = () =>
+      buildHw
+        ? buildHw.length >= 2
+          ? buildHw(dayKey, chunk, hwCtx)
+          : buildHw(hwCtx)
+        : `LeetCode\nPurpose: continue today's class skill (“${topic}”).\nProblem: Easy practice on “${topic}”\nProject: ${buildTask}\nDo: solve or log attempt.\nDeliverable: Accepted/logged + Apply note.\n\nAgent Workbench\nEvent Logger Agent (Easy) — continue today's workbench slice\nProduct glance: ${buildTask}\nProblem (short): ${buildTask}\nWhat to build: one small workflow for today's product.\nDeliverable: one successful run saved.\n\nCase study\nFor tomorrow Speak & Solve\nCase: Apply “${topic}” to your product\nDeliverable: 3 insight lines + 1 product change.`;
+
+    const hwIdx = chunk.findIndex((r) => /homework/i.test(String(r[2] || "")));
+    if (hwIdx === -1) {
+      chunk.push([dayKey, "Tonight", "Tonight's Homework", makeHw()]);
+    } else {
+      const existing = String(chunk[hwIdx][3] || "").trim();
+      if (!existing || !isOriginal(existing)) {
+        chunk[hwIdx][1] = "Tonight";
+        chunk[hwIdx][2] = "Tonight's Homework";
+        chunk[hwIdx][3] = makeHw();
+      } else {
+        chunk[hwIdx][1] = "Tonight";
+      }
+    }
+    out.push(...chunk);
+    workingDayIdx += 1;
+  }
+  return out;
+}
+
 function getExamFocus(subjectName, weekTopic, examAnalysis) {
   const topics = examAnalysis?.[subjectName];
   if (topics && topics.length > 0) {
@@ -965,7 +1089,7 @@ function presliceWeekContent(theme, globalWeekDayOffset = 0) {
       primarySubject,
       allSubjects:         daySubjects,
       allSubjectsCount:    daySubjects.length,
-      dsaSubtopic:         `${dsaBase} — ${DSA_PHASES[i]}`,
+      dsaSubtopic:         String(dsaBase || "").trim() ? `${dsaBase} — ${DSA_PHASES[i]}` : "",
       subjectPhase:        SUBJECT_PHASES[i],
       sdPhase:             SD_PHASES[i],
       activityType:        ACTIVITY_TYPES[i],
@@ -1089,10 +1213,12 @@ function buildFridayRows(theme, examAnalysis, focusOverride, dayKey, globalDayIn
 
 async function generateDailyPlan(inputs, themes, examAnalysis, focusOverride, calendarMeta, calMap) {
   const allRows = [];
+  inputs = normalizeForceOverride(inputs || {});
   // Hands-on: if Subjects upload empty, use editable backend/data/collegeSyllabusInput.txt
   try {
     const { ensureSyllabusFromHandsOnFile } = require("./loadCollegeSyllabusInput");
     inputs = await ensureSyllabusFromHandsOnFile(inputs || {});
+    inputs = normalizeForceOverride(inputs || {});
   } catch (_) {
     /* optional */
   }
@@ -1300,6 +1426,32 @@ async function generateDailyPlan(inputs, themes, examAnalysis, focusOverride, ca
     inputs._systemDesignLessonPack = null;
   }
 
+  // ── Activity layout: _dayTemplate (else _activityBlueprint.daily) ─────────
+  // When _useActivityLayout is true (or a template is present), NEVER start from
+  // a canned 9–6 / OKR day. Times come from the template; LLM fills content only.
+  let dayTemplate = null;
+  try {
+    const {
+      useActivityLayout,
+      parseDayTemplate,
+      patchTemplateWithMustApply,
+    } = require("./dayTemplateEngine");
+    if (useActivityLayout(inputs)) {
+      const parsed = parseDayTemplate(inputs);
+      if (parsed && parsed.length) {
+        dayTemplate = await patchTemplateWithMustApply(parsed, inputs);
+        inputs._dayTemplateApplied = true;
+        inputs._activeDayTemplate = dayTemplate;
+        console.log(
+          `📐 Day template layout ON — ${dayTemplate.length} period(s); LLM fills Task/Content only`
+        );
+      }
+    }
+  } catch (e) {
+    console.warn("dayTemplateEngine init skipped:", e.message);
+    dayTemplate = null;
+  }
+
   for (const theme of themes) {
     const isMockWeek = theme.week === mockWeekNum;
     const isAUWeek   = auWeekSet.has(theme.week);
@@ -1356,39 +1508,109 @@ async function generateDailyPlan(inputs, themes, examAnalysis, focusOverride, ca
         allRows.push(...rows.map(r => [dayKey, ...r.slice(1)]));
       } else {
         const activeStageKey = inputs?._activeDTStage || inputs?.activeDTStage || null;
+        // Honour _dtPlaybookMap / _productStagePlan — Project Build Stage for THIS day
         const dtStepForDay = getStepForPlanDay(globalDayIndex, activeStageKey, inputs);
-        // Gap-driven day: small LLM JSON (topic gap) + deterministic continuous schedule.
-        // Avoids "Partial JSON recovered — 2 rows" from the old 13-row mega-prompt.
-        try {
-          const { generateDayGapContent, buildGapDrivenDayRows } = require("./dayGapGenerator");
-          const gap = await generateDayGapContent({
-            dayName: day,
-            dayKey,
-            theme,
-            inputs,
-            globalDayIndex,
-            daySlice,
-            dtStep: dtStepForDay,
-          });
-          if (!inputs._seenResourceUrls) inputs._seenResourceUrls = new Set();
-          const dayRows = buildGapDrivenDayRows(dayKey, gap, {
-            theme,
-            dtStep: dtStepForDay,
-            dayIdx: globalDayIndex,
-            inputs,
-            daySlice,
-          });
-          console.log(
-            `✅ ${dayKey}: gap-driven (${gap._fallback ? "fallback" : "LLM"})` +
-            `${dtStepForDay ? ` | DT: ${dtStepForDay.step}` : ""}` +
-            ` — learn "${gap.learnTopic}" → apply`
-          );
-          allRows.push(...enforceDayConnectivity(dayRows, { theme, dtStep: dtStepForDay }));
-        } catch (err) {
-          console.error(`Week ${theme.week} ${day} failed:`, err.message);
-          const rows = createSplitLearningSchedule(theme, day, theme.subjects.length, examAnalysis, globalDayIndex);
-          const dayRows = rows.map(r => [dayKey, ...r.slice(1)]);
-          allRows.push(...enforceDayConnectivity(dayRows, { theme, dtStep: dtStepForDay }));
+
+        // Template-first path: exact periods/clocks from _dayTemplate; LLM → column 4 only
+        if (dayTemplate && dayTemplate.length) {
+          try {
+            const { generateTemplateDayRows } = require("./dayTemplateEngine");
+            if (!inputs._seenResourceUrls) inputs._seenResourceUrls = new Set();
+            const dayRows = await generateTemplateDayRows(dayKey, dayTemplate, {
+              inputs,
+              theme,
+              dtStep: dtStepForDay,
+              daySlice,
+              dayIdx: globalDayIndex,
+            });
+            console.log(
+              `✅ ${dayKey}: template+LLM content (${dayTemplate.length} periods)` +
+              `${dtStepForDay ? ` | DT: ${dtStepForDay.stage} → ${dtStepForDay.step}${dtStepForDay.fromDtPlaybookMap ? " [map]" : ""}` : ""}`
+            );
+            // Persist YouTube + Article on Learning cells (honor _requireLearningLinks)
+            allRows.push(
+              ...enforceDayConnectivity(dayRows, {
+                theme,
+                dtStep: dtStepForDay,
+                dayIdx: globalDayIndex,
+                inputs,
+                requireLearningLinks: inputs._requireLearningLinks !== false,
+              })
+            );
+          } catch (err) {
+            console.error(`Week ${theme.week} ${day} template day failed:`, err.message);
+            // Retry keeps homework: generateTemplateDayRows always appends Tonight's Homework
+            try {
+              const { generateTemplateDayRows: retryTemplateDay } = require("./dayTemplateEngine");
+              const dayRows = await retryTemplateDay(dayKey, dayTemplate, {
+                inputs,
+                theme,
+                dtStep: dtStepForDay,
+                daySlice,
+                dayIdx: globalDayIndex,
+              });
+              allRows.push(
+                ...enforceDayConnectivity(dayRows, {
+                  theme,
+                  dtStep: dtStepForDay,
+                  dayIdx: globalDayIndex,
+                  inputs,
+                  requireLearningLinks: inputs._requireLearningLinks !== false,
+                })
+              );
+            } catch (retryErr) {
+              console.error(`Week ${theme.week} ${day} template retry failed:`, retryErr.message);
+            }
+          }
+        } else {
+          // Gap-driven day: small LLM JSON (topic gap) + deterministic continuous schedule.
+          try {
+            const { generateDayGapContent, buildGapDrivenDayRows } = require("./dayGapGenerator");
+            const gap = await generateDayGapContent({
+              dayName: day,
+              dayKey,
+              theme,
+              inputs,
+              globalDayIndex,
+              daySlice,
+              dtStep: dtStepForDay,
+            });
+            if (!inputs._seenResourceUrls) inputs._seenResourceUrls = new Set();
+            const dayRows = buildGapDrivenDayRows(dayKey, gap, {
+              theme,
+              dtStep: dtStepForDay,
+              dayIdx: globalDayIndex,
+              inputs,
+              daySlice,
+            });
+            console.log(
+              `✅ ${dayKey}: gap-driven (${gap._fallback ? "fallback" : "LLM"})` +
+              `${dtStepForDay ? ` | DT: ${dtStepForDay.step}` : ""}` +
+              ` — learn "${gap.learnTopic}" → apply`
+            );
+            allRows.push(
+              ...enforceDayConnectivity(dayRows, {
+                theme,
+                dtStep: dtStepForDay,
+                dayIdx: globalDayIndex,
+                inputs,
+                requireLearningLinks: inputs._requireLearningLinks !== false,
+              })
+            );
+          } catch (err) {
+            console.error(`Week ${theme.week} ${day} failed:`, err.message);
+            const rows = createSplitLearningSchedule(theme, day, theme.subjects.length, examAnalysis, globalDayIndex);
+            const dayRows = rows.map(r => [dayKey, ...r.slice(1)]);
+            allRows.push(
+              ...enforceDayConnectivity(dayRows, {
+                theme,
+                dtStep: dtStepForDay,
+                dayIdx: globalDayIndex,
+                inputs,
+                requireLearningLinks: inputs._requireLearningLinks !== false,
+              })
+            );
+          }
         }
       }
       globalDayIndex++;
@@ -1398,20 +1620,38 @@ async function generateDailyPlan(inputs, themes, examAnalysis, focusOverride, ca
     await wait(800);
   }
 
-  let finalRows = normalizeRows(allRows);
-  // Deterministic engagement (not LLM-dependent): neat titles, 8-min placement,
-  // deep project breakdown, product speak, refresh game, motivation,
-  // continuous 08:45–04:30 grid, Project Build, SNS Agent Workbench.
-  try {
-    const { enrichArrayRows } = require("./dayEngagementEnricher");
-    const themeByWeek = {};
-    (themes || []).forEach((t) => { themeByWeek[t.week] = t; });
-    finalRows = enrichArrayRows(finalRows, {
-      ...(inputs || {}),
-      _themeByWeek: themeByWeek,
-    });
-  } catch (e) {
-    console.warn("dayEngagementEnricher skipped:", e.message);
+  let finalRows = ensureHomeworkOnEveryWorkingDay(normalizeRows(allRows), inputs);
+
+  // When template / blueprint layout is present, do NOT remash onto a canned day.
+  let hasActivityLayout = Boolean(dayTemplate && dayTemplate.length);
+  if (!hasActivityLayout) {
+    try {
+      const { parseActivityBlueprint, parseJsonField } = require("./scheduleOverrides");
+      const bp = parseActivityBlueprint(inputs || {});
+      const ov = parseJsonField((inputs || {})._slotOverrides);
+      hasActivityLayout = Boolean(
+        (bp && bp.daily && bp.daily.length) || (ov && Object.keys(ov).length)
+      );
+    } catch (_) {
+      hasActivityLayout = false;
+    }
+  }
+
+  if (!hasActivityLayout) {
+    // Deterministic engagement only when there is no explicit Activities list
+    try {
+      const { enrichArrayRows } = require("./dayEngagementEnricher");
+      const themeByWeek = {};
+      (themes || []).forEach((t) => { themeByWeek[t.week] = t; });
+      finalRows = enrichArrayRows(finalRows, {
+        ...(inputs || {}),
+        _themeByWeek: themeByWeek,
+      });
+    } catch (e) {
+      console.warn("dayEngagementEnricher skipped:", e.message);
+    }
+  } else {
+    console.log("📐 Skipping canned day enrich — using _activityBlueprint / _slotOverrides as sole layout");
   }
 
   // ── Honor the requested day count exactly ─────────────────────────────────
@@ -1458,6 +1698,26 @@ async function generateDailyPlan(inputs, themes, examAnalysis, focusOverride, ca
     }
   }
 
+  // Homework overrides (and blueprint remash only when template engine was NOT used)
+  try {
+    finalRows = applyScheduleOverridesToDailyRows(finalRows, inputs || {});
+  } catch (e) {
+    console.warn("scheduleOverrides skipped:", e.message);
+  }
+
+  // Must apply already patched the template before content LLM when using activity layout.
+  // Only run row-level must-apply remash for non-template generations.
+  if (forceApplyOn(inputs || {}) && !inputs._dayTemplateApplied) {
+    try {
+      finalRows = await applyMustApplyLastToDailyRows(finalRows, inputs || {});
+    } catch (e) {
+      console.warn("must-apply-last skipped:", e.message);
+    }
+  }
+
+  // Belt-and-braces: every working day still has Tonight's Homework after overrides
+  finalRows = ensureHomeworkOnEveryWorkingDay(finalRows, inputs);
+
   return {
     module:  "daily",
     title,
@@ -1465,6 +1725,90 @@ async function generateDailyPlan(inputs, themes, examAnalysis, focusOverride, ca
     rows:    finalRows,
     ...(testingReport ? { testingReport } : {}),
   };
+}
+
+/**
+ * Apply Must-apply text LAST over blueprint layout (one LLM pass on day 1 as template,
+ * then copy structural edits onto later days' matching activities when possible).
+ * Empty must-apply → no-op (caller checks forceApplyOn).
+ */
+async function applyMustApplyLastToDailyRows(rows = [], inputs = {}) {
+  const must = mustApplyPromptSection(inputs);
+  if (!must.trim()) return rows;
+  const groups = groupRowsByDay(rows);
+  if (!groups.length) return rows;
+
+  // Apply force on the first day fully; if layout unchanged, skip further LLM cost
+  const first = groups[0];
+  const prompt =
+    `You are editing ONE day of an existing schedule built from an activity blueprint.\n` +
+    `Apply the HARD USER OVERRIDE LAST — it may change times, drop periods, or add periods.\n` +
+    `If no layout change is needed, keep the same activities/times and only tweak content when asked.\n` +
+    `Write Time cells as 12-hour IST only (e.g. "9:00–9:15 AM IST"). Never 09:00-09:15, never UTC/GMT.\n` +
+    `Return ONLY valid JSON: {"rows":[["${first.dayKey}","9:00–9:15 AM IST","Activity",["bullet"]],…]}\n` +
+    `Do not invent a canned 9–6 / OKR day. Homework time stays "Tonight" if present.\n\n` +
+    `${must}\n` +
+    `EXISTING DAY ROWS:\n${JSON.stringify(first.rows)}`;
+
+  const raw = await callLLM(prompt, { json: true, maxTokens: 4000 });
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+    } catch (_) {
+      return rows;
+    }
+  }
+  const edited = Array.isArray(parsed?.rows) ? parsed.rows.filter((r) => Array.isArray(r)) : [];
+  if (!edited.length) return rows;
+
+  // Use edited day 1; for later days, rebuild from blueprint already applied —
+  // re-run the same force prompt only when there are few days (≤5), else keep blueprint days 2+.
+  const out = [];
+  out.push(...edited.map((r) => {
+    const next = r.slice();
+    next[0] = first.dayKey;
+    return next;
+  }));
+
+  if (groups.length === 1) return out;
+
+  if (groups.length <= 5) {
+    for (let i = 1; i < groups.length; i++) {
+      const g = groups[i];
+      const p =
+        `Same rules as before. Apply HARD USER OVERRIDE LAST onto this day.\n` +
+        `12-hour IST clocks only. Return {"rows":[...]} for "${g.dayKey}" only.\n\n` +
+        `${must}\nEXISTING:\n${JSON.stringify(g.rows)}`;
+      try {
+        const rawN = await callLLM(p, { json: true, maxTokens: 4000 });
+        let parsedN = rawN;
+        if (typeof rawN === "string") {
+          parsedN = JSON.parse(rawN.replace(/```json|```/g, "").trim());
+        }
+        const editedN = Array.isArray(parsedN?.rows)
+          ? parsedN.rows.filter((r) => Array.isArray(r))
+          : [];
+        if (editedN.length) {
+          out.push(
+            ...editedN.map((r) => {
+              const next = r.slice();
+              next[0] = g.dayKey;
+              return next;
+            })
+          );
+          continue;
+        }
+      } catch (_) {
+        /* keep original day */
+      }
+      out.push(...g.rows);
+    }
+    return out;
+  }
+
+  for (let i = 1; i < groups.length; i++) out.push(...groups[i].rows);
+  return out;
 }
 
 function groupRowsByDay(rows) {
@@ -1511,35 +1855,54 @@ async function polishDailyPlan(existingPlan) {
   const columns = existingPlan.columns || ["Day", "Time", "Activity", "Task / Content"];
   const groups = groupRowsByDay(existingPlan.rows);
   const polishedRows = [];
+  const inputs = existingPlan.inputs || existingPlan.meta?.inputs || {};
+  if (inputs._requireLearningLinks == null) inputs._requireLearningLinks = true;
+  if (!inputs._seenResourceUrls) inputs._seenResourceUrls = new Set();
 
-  for (const group of groups) {
+  for (let gi = 0; gi < groups.length; gi++) {
+    const group = groups[gi];
     try {
       const prompt = buildDailyPolishPrompt(group.dayKey, group.rows, columns);
       const result = await callLLM(prompt, 2200);
+      let dayRows;
       if (Array.isArray(result.rows) && result.rows.length === group.rows.length) {
-        // Belt-and-braces: whatever the model does, Day/Time/Activity are
-        // forced back to the original values so content can never drift.
-        const safeRows = result.rows.map((r, i) => [
+        // Belt-and-braces: Day/Time/Activity stay fixed; Learning + Homework keep structure
+        dayRows = result.rows.map((r, i) => [
           group.rows[i][0],
           group.rows[i][1],
           group.rows[i][2],
-          /learning/i.test(String(group.rows[i][2] || ""))
+          /learning|theory|homework/i.test(String(group.rows[i][2] || ""))
             ? group.rows[i][3]
             : (r && typeof r[3] === "string" && r[3].trim()) ? r[3] : group.rows[i][3],
         ]);
-        polishedRows.push(...safeRows);
       } else {
         console.warn(`Polish row-count mismatch for ${group.dayKey}, keeping original`);
-        polishedRows.push(...group.rows);
+        dayRows = group.rows.map((r) => [...r]);
       }
+      polishedRows.push(
+        ...enforceDayConnectivity(dayRows, {
+          inputs,
+          dayIdx: gi,
+          requireLearningLinks: true,
+          theme: existingPlan.theme || {},
+        })
+      );
     } catch (err) {
       console.error(`Polish failed for ${group.dayKey}:`, err.message);
-      polishedRows.push(...group.rows);
+      polishedRows.push(
+        ...enforceDayConnectivity(group.rows.map((r) => [...r]), {
+          inputs,
+          dayIdx: gi,
+          requireLearningLinks: true,
+          theme: existingPlan.theme || {},
+        })
+      );
     }
     await wait(300);
   }
 
-  return { ...existingPlan, columns, rows: polishedRows };
+  const rows = ensureHomeworkOnEveryWorkingDay(polishedRows, inputs);
+  return { ...existingPlan, columns, rows };
 }
 
 // ── Stamp week labels ─────────────────────────────────────────────────────────
@@ -1548,6 +1911,7 @@ module.exports = {
   generateDailyPlan,
   polishDailyPlan,
   presliceWeekContent,
+  ensureHomeworkOnEveryWorkingDay,
 
   getExamFocus,
   getDetailedExamQuestions,

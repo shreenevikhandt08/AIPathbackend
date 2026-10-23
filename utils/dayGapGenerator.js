@@ -163,7 +163,7 @@ function pickDaySubjects(daySlice, theme, max = 3) {
 }
 
 function subjectTopicLine(s) {
-  if (!s) return "today's concept";
+  if (!s) return "core project skill";
   const name = String(s.name || "Subject").trim();
   const topic = String(s.topic || s.unit || "fundamentals").trim();
   return `${name}: ${topic}`;
@@ -261,14 +261,14 @@ function buildMultiPurposeLearning({
   const primary = subjects[0] || daySlice?.primarySubject || null;
   const secondary = subjects[1] || null;
   const problem = softClip(problemQuote || "your project", 70);
-  const topic = softClip(learnLabel || primary?.topic || "today's concept", 55);
+  const topic = softClip(learnLabel || primary?.topic || "core project skill", 55);
 
   const omitA = omitConceptsForSubject(primary, inputs).map((x) => x.toLowerCase());
   const mustA = mustConceptsForSubject(primary, inputs).filter(
     (c) => !omitA.some((o) => c.toLowerCase().includes(o) || o.includes(c.toLowerCase()))
   );
   const topicSafe = omitA.some((o) => String(primary?.topic || topic).toLowerCase().includes(o))
-    ? (mustA[0] || "today's included concept")
+    ? (mustA[0] || "required syllabus topic")
     : (primary?.topic || gap?.subtopics?.[0] || topic);
   const conceptA = mustA[0] || softClip(topicSafe, 55);
   const conceptB =
@@ -1258,10 +1258,7 @@ function refreshChoiceBlock(picks, problemQuote = "") {
 
 /** Break / Lunch — rest only. No purpose, no drills. */
 function betweenClassBreakContent({ slotLabel = "Break" } = {}) {
-  return bullets([
-    `▶ ${slotLabel}`,
-    `▶ Rest only — no task.`,
-  ]);
+  return /lunch/i.test(slotLabel) ? "Lunch — rest only." : "Break — rest only.";
 }
 
 /** Track homework IDs already assigned in this plan run — prevents night-to-night repeats. */
@@ -1629,7 +1626,7 @@ function hwLeetCode(problem, sdMeta = null, projectMeta = null) {
     `Project: ${problemGlance}`,
     `Do: solve (or log attempt if stuck >25 min).`,
     `Apply: ${projectHook}`,
-    `Done when: Accepted/logged + Apply note names where this pattern fits in the product.`,
+    `Deliverable: Accepted/logged + Apply note names where this pattern fits in the product.`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -1686,7 +1683,7 @@ function hwExercism(ex, problemQuote = "") {
     `Your product (in short): ${problem}`,
     `Link: ${ex.url}`,
     `Do this: Open → code → pass tests. Then write 1 line: which skill from this exercise helps "${problem}".`,
-    `Done when: all tests pass AND that 1 line is in notes/exercism-apply.md.`,
+    `Deliverable: all tests pass AND that 1 line is in notes/exercism-apply.md.`,
   ].join("\n");
 }
 
@@ -1695,45 +1692,46 @@ function hwLinkedInArticle(dayIdx, learnLabel, dayKey = "", usedLi = null, probl
   const problem = softClip(problemQuote || "your project problem", 70);
   const d = weekDayIndex(dayIdx, dayKey); // Mon=0…Fri=4
   const week = weekNumberFromKey(dayKey, dayIdx);
+  // LinkedIn / cert nights are OKRion-only (not Agent Workbench)
   const variants = [
     {
       id: `w${week}-draft-${topic}`,
       lines: [
         `LinkedIn`,
-        `Week ${week} draft — article on "${topic}"`,
+        `OKRion task — Week ${week} draft — article on "${topic}"`,
         `Your problem (in short): ${problem}`,
         `Task: Write 8–12 lines with a clear title. Include 1 line on how "${topic}" helps "${problem}". Save in notes/linkedin-w${week}.md. Do not post yet.`,
-        `Done when: draft has a title, 8–12 lines, and one takeaway unique to Week ${week} tied to your product.`,
+        `Deliverable: draft has a title, 8–12 lines, and one takeaway unique to Week ${week} tied to your product.`,
       ],
     },
     {
       id: `w${week}-comment-${topic}`,
       lines: [
         `LinkedIn`,
-        `Week ${week} — leave 2 thoughtful comments on posts about "${topic}"`,
+        `OKRion task — Week ${week} — leave 2 thoughtful comments on posts about "${topic}"`,
         `Your problem (in short): ${problem}`,
         `Task: Find 2 real posts. Comment with one insight each that could help "${problem}" (not "great post"). Save links in notes/linkedin-w${week}-comments.md.`,
-        `Done when: 2 comments are live and noted.`,
+        `Deliverable: 2 comments are live and noted.`,
       ],
     },
     {
       id: `w${week}-publish-${topic}`,
       lines: [
         `LinkedIn`,
-        `Week ${week} publish — article on "${topic}"`,
+        `OKRion task — Week ${week} publish — article on "${topic}"`,
         `Your problem (in short): ${problem}`,
         `Task: Post from notes/linkedin-w${week}.md (or write fresh 8–12 lines). First line must mention what you are building for "${problem}". Leave 1 real comment on a peer post.`,
-        `Done when: article is live, URL saved, and you left 1 comment.`,
+        `Deliverable: article is live, URL saved, and you left 1 comment.`,
       ],
     },
     {
       id: `w${week}-carousel-${topic}`,
       lines: [
         `LinkedIn`,
-        `Week ${week} — outline a 5-slide carousel on "${topic}"`,
+        `OKRion task — Week ${week} — outline a 5-slide carousel on "${topic}"`,
         `Your problem (in short): ${problem}`,
         `Task: Write 5 slide titles + 1 line each in notes/linkedin-w${week}-carousel.md. Slide 5 = how this helps "${problem}".`,
-        `Done when: 5 slides are outlined with one takeaway for your product.`,
+        `Deliverable: 5 slides are outlined with one takeaway for your product.`,
       ],
     },
   ];
@@ -1828,27 +1826,28 @@ function hwAgentWorkbench(dayIdx, usedAgent = null, problemText = "", opts = {})
       bank?.success ||
       "Output file exists and shows a complete run.";
 
+    // Homework agent = continue today's workbench / project slice (never OKRion)
     return [
       `Agent Workbench`,
-      `${title} (${level})`,
+      `${title} (${level}) — continue today's workbench slice for "${product}"`,
       `Product glance: ${product}`,
-      `Problem: ${problem}`,
+      `Problem (short): ${problem}`,
       `What to build: ${what}`,
       ...steps.map((s, i) => `Step ${i + 1}: ${s}`),
-      `Done when: ${done}`,
+      `Deliverable: ${done}`,
       `Apply: 1 line — how this agent helps "${product}".`,
     ].join("\n");
   } catch (_) {
     return [
       `Agent Workbench`,
-      `Event Logger Agent (Easy)`,
+      `Event Logger Agent (Easy) — continue today's workbench slice for "${product}"`,
       `Product glance: ${product}`,
-      `Problem: Save one event with a name, zone, and timestamp.`,
+      `Problem (short): Save one event with a name, zone, and timestamp.`,
       `What to build: A small workflow that logs one event and writes a text file.`,
       `Step 1: Open Agent Workbench → create workflow Event-Logger-Day.`,
       `Step 2: Add Manual Trigger → fields: event, zone, timestamp.`,
       `Step 3: Save output to agent-log-day${Number(dayIdx) + 1}.txt and run once.`,
-      `Done when: agent-log-day${Number(dayIdx) + 1}.txt shows event + zone + timestamp.`,
+      `Deliverable: agent-log-day${Number(dayIdx) + 1}.txt shows event + zone + timestamp.`,
       `Apply: 1 line — how this agent helps "${product}".`,
     ].join("\n");
   }
@@ -1977,7 +1976,7 @@ function hwCaseStudyForTomorrow(dayIdx, inputs = {}, dayKey = "", actor = null) 
     `  2) Write 3 short lines: what happened / why it matters / 1 lesson for YOUR product.`,
     `  3) Apply: name ONE change you will make to "${softClip(problemQuote, 55)}" (feature, user, or risk).`,
     `Tomorrow: In Speak & Solve, say that 1 lesson + the product change (no reading full notes).`,
-    `Done when: file homework-case-day${next.abs + 1}.md has case title on line 1 + 3 insights + Apply line.`,
+    `Deliverable: file homework-case-day${next.abs + 1}.md has case title on line 1 + 3 insights + Apply line.`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -2305,7 +2304,8 @@ function homeworkBlock({
   }
 
   // Issue 15: do not repeat "Tonight's Homework" inside content (row header already has it)
-  return body;
+  // Always Deliverable — never Done when (FE homework cards expect Deliverable)
+  return String(body || "").replace(/\bDone when:/gi, "Deliverable:");
 }
 
 function lightPlacementBlock(company, dayIdx = 0) {
@@ -3229,6 +3229,122 @@ function buildGapDrivenDayRows(dayKey, gap, opts = {}) {
         themeDsa: theme?.dsa || "",
       }),
     });
+  }
+
+  // When layout is from _activityBlueprint / _slotOverrides: emit ONLY those
+  // periods, in blueprint order, with blueprint times — never invent OKR /
+  // extra games / extra learning from the canned day.
+  if (window?.fromBlueprint || Object.values(slots || {}).some((s) => s?.fromBlueprint)) {
+    try {
+      const {
+        parseActivityBlueprint,
+        formatClockRange,
+        SLOT_LABELS,
+      } = require("./scheduleOverrides");
+      const bp = parseActivityBlueprint(inputs);
+      if (bp && bp.daily && bp.daily.length) {
+        const byId = {
+          standup: standupContent,
+          problem: psReviewBlock,
+          problemreview: psReviewBlock,
+          learning: learnBlock,
+          break: breakContent,
+          sysdesign: includeSd ? sdContent : "",
+          lunch: betweenClassBreakContent({ slotLabel: "Lunch" }),
+          coding: midContent,
+          mid: midContent,
+          project: projectBlock,
+          speak: speakSolveBlock(gap, picks, learnLabel, problemShort, dayIdx, {
+            inputs,
+            dayKey,
+            member: actor.member,
+            memberIdx: actor.memberIdx,
+            problemQuote,
+          }),
+          placement: problemFirst
+            ? lightPlacementBlock(company, dayIdx)
+            : placementBlock(company, gap, problemFull, dayIdx),
+          agent: includeAgent ? agentNotes : "",
+          game: picks.game
+            ? refreshChoiceBlock(picks, problemQuote)
+            : breakContent,
+          profile: profileSlot.content,
+          close: retroContent,
+          retro: retroContent,
+        };
+        const { resolvePeriodContent, normalizePeriodId, isWeakContent } = require("./blueprintPeriodContent");
+        const out = [];
+        let learningUses = 0;
+        for (const p of bp.daily) {
+          if (!p || String(p.mode || "keep").toLowerCase() === "hide") continue;
+          const id = String(p.id || "").trim().toLowerCase() || "custom";
+          const normId = normalizePeriodId(id, p.title);
+          const clock =
+            formatClockRange(p.start, p.end, inputs) ||
+            (slots[
+              Object.keys(slots).find((k) => slots[k]?.blueprintId?.toLowerCase() === id)
+            ] || {}).time;
+          if (!clock) continue;
+          const activity =
+            String(p.title || "").trim() || SLOT_LABELS[normId] || SLOT_LABELS[id] || id;
+          const notes = String(p.notes || "").trim();
+          let seed =
+            byId[id] ||
+            byId[normId] ||
+            byId[id.replace(/[\s_-]/g, "")] ||
+            "";
+          if (normId === "learning") {
+            seed = learningUses === 0 ? learnBlock : deepenBlock || learnBlock;
+            learningUses += 1;
+          }
+          if (normId === "sysdesign" && !includeSd) seed = "";
+          let content = resolvePeriodContent(
+            { id: normId, title: activity, notes },
+            seed,
+            { inputs, dayKey, dayIdx, problem: problemFull }
+          );
+          if (isWeakContent(content, activity)) {
+            content = resolvePeriodContent(
+              { id: normId, title: activity, notes: "" },
+              "",
+              { inputs, dayKey, dayIdx, problem: problemFull }
+            );
+          }
+          out.push([dayKey, clock, activity, content]);
+        }
+        if (slots.homework) {
+          let hw = homeworkBlock({
+            picks,
+            gap,
+            learnLabel,
+            agentNotes,
+            sysContent: includeSd ? sdContent : "",
+            dayIdx,
+            dayKey,
+            inputs,
+            problemFirst,
+            skipDsa,
+            skipSd,
+            skipBanks,
+            member: actor.member,
+            memberIdx: actor.memberIdx,
+            daySlice,
+            themeDsa: theme?.dsa || "",
+          });
+          if (isWeakContent(hw, "Tonight's Homework")) {
+            hw = resolvePeriodContent(
+              { id: "homework", title: "Tonight's Homework", notes: "" },
+              "",
+              { inputs, dayKey, dayIdx, problem: problemFull }
+            );
+          }
+          out.push([dayKey, "Tonight", "Tonight's Homework", hw]);
+        }
+        return out;
+      }
+    } catch (e) {
+      console.warn("blueprint-only emit skipped:", e.message);
+    }
   }
 
   // Chronological order so multi-break slots land in the right place

@@ -1,5 +1,6 @@
 const ScheduleRepository = require("../models/ScheduleRepository");
 const { buildScheduleFingerprint } = require("../utils/scheduleFingerprint");
+const { sliceForceField } = require("../utils/forceOverride");
 
 function previewProblem(inputs = {}) {
   return String(inputs.problem || "")
@@ -125,6 +126,47 @@ function basePayload(inputs, plan, weekly, userId, extra = {}) {
       _plannerMode: inputs._plannerMode || "",
       _numDays: inputs._numDays || null,
       problem: String(inputs.problem || "").slice(0, 1200),
+      // Force-apply + activity layout — kept so regenerate / "save my schedule" retain it
+      manualPrompt: sliceForceField(inputs.manualPrompt),
+      _forceApply: inputs._forceApply != null ? String(inputs._forceApply) : "",
+      _forceInstructions: sliceForceField(inputs._forceInstructions),
+      _forceFileNotes: sliceForceField(inputs._forceFileNotes),
+      _mustApplyText: sliceForceField(inputs._mustApplyText),
+      _useActivityLayout:
+        inputs._useActivityLayout != null ? String(inputs._useActivityLayout) : "",
+      _cohortPhase: inputs._cohortPhase != null ? String(inputs._cohortPhase) : "",
+      _snsAgentWorkbench:
+        inputs._snsAgentWorkbench != null ? String(inputs._snsAgentWorkbench) : "",
+      _requireLearningLinks:
+        inputs._requireLearningLinks != null ? String(inputs._requireLearningLinks) : "",
+      _dtPlaybookMap: sliceForceField(
+        typeof inputs._dtPlaybookMap === "string"
+          ? inputs._dtPlaybookMap
+          : JSON.stringify(inputs._dtPlaybookMap || {})
+      ),
+      _productStageBlock: sliceForceField(inputs._productStageBlock),
+      _dayTemplate: sliceForceField(
+        typeof inputs._dayTemplate === "string"
+          ? inputs._dayTemplate
+          : JSON.stringify(inputs._dayTemplate || [])
+      ),
+      _timeFormat: inputs._timeFormat != null ? String(inputs._timeFormat) : "12h",
+      _timezone: inputs._timezone != null ? String(inputs._timezone) : "IST",
+      _activityBlueprint: sliceForceField(
+        typeof inputs._activityBlueprint === "string"
+          ? inputs._activityBlueprint
+          : JSON.stringify(inputs._activityBlueprint || {})
+      ),
+      _slotOverrides: sliceForceField(
+        typeof inputs._slotOverrides === "string"
+          ? inputs._slotOverrides
+          : JSON.stringify(inputs._slotOverrides || {})
+      ),
+      _homeworkOverrides: sliceForceField(
+        typeof inputs._homeworkOverrides === "string"
+          ? inputs._homeworkOverrides
+          : JSON.stringify(inputs._homeworkOverrides || {})
+      ),
       memberName,
       memberKey,
     },

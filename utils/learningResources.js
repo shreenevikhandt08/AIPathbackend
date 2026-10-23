@@ -93,8 +93,27 @@ function markResourceLines(items = [], inputs = {}, topic = "") {
       }
     }
 
+    // Learning cells persist watch?v= only — coerce playlists/search to curated watch
+    if (kind === "YouTube") {
+      const { isWatchYoutubeStrict, DEFAULT_PAIR } = require("../data/curatedLearningLinks");
+      if (!isWatchYoutubeStrict(url) || /results\?search_query=/i.test(url)) {
+        url = DEFAULT_PAIR.youtube.url;
+        title = DEFAULT_PAIR.youtube.title;
+      }
+    }
+    if (kind === "Website" || kind === "Article") {
+      if (/geeksforgeeks\.org\/\?s=/i.test(url) || /\/search\?/i.test(url)) {
+        const fb = curatedOrDefault(topicLabel);
+        url = fb.web.url;
+        title = fb.web.title;
+      }
+    }
     seen.add(url);
-    lines.push(`   · ${kind}: ${title} — ${url}`);
+    if (kind === "YouTube") {
+      lines.push(`▶ YouTube: ${url}`);
+    } else {
+      lines.push(`▶ Article: ${url}`);
+    }
   }
   return lines;
 }
@@ -213,14 +232,12 @@ function ebookHintsFromUploads(inputs = {}, topic = {}) {
  */
 function buildLearningLinkLines(topic, gap = {}, inputs = {}) {
   const dayIdx = Number(gap.dayIdx ?? inputs._dayIdx ?? 0) || 0;
-
-  try {
-    const { buildPersonaLinkLines } = require("./personaDevelopment");
-    const { lines } = buildPersonaLinkLines(topic, inputs || {}, { dayIdx });
-    return (lines || []).filter(Boolean).slice(0, 2);
-  } catch (e) {
-    console.warn("[buildLearningLinkLines] persona path skipped:", e.message);
-  }
+  // Explicit true → never skip; false → skip force; default → force
+  const forceBoth =
+    inputs?._requireLearningLinks === true ||
+    inputs?._requireLearningLinks === "true" ||
+    (inputs?._requireLearningLinks !== false &&
+      inputs?._requireLearningLinks !== "false");
 
   const ragPack =
     gap.learnResourcePack ||
@@ -236,16 +253,48 @@ function buildLearningLinkLines(topic, gap = {}, inputs = {}) {
   if (curated?.web?.url && seen instanceof Set) seen.add(curated.web.url);
   if (curated?.youtube?.url && seen instanceof Set) seen.add(curated.youtube.url);
 
-  const lines = [
-    ...markResourceLines(
+  let lines = [];
+  try {
+    const { buildPersonaLinkLines } = require("./personaDevelopment");
+    const { lines: personaLines } = buildPersonaLinkLines(topic, inputs || {}, { dayIdx });
+    lines = (personaLines || []).filter(Boolean);
+  } catch (e) {
+    console.warn("[buildLearningLinkLines] persona path skipped:", e.message);
+  }
+
+  // Always guarantee Website + YouTube https lines for Learning cells
+  const hasWeb = lines.some((l) => /website\s*:/i.test(l) && /https?:\/\//i.test(l));
+  const hasYt = lines.some(
+    (l) =>
+      (/youtube\s*:|video\s*:/i.test(l) || /youtu(\.be|be\.com)/i.test(l)) &&
+      /https?:\/\//i.test(l)
+  );
+  if (forceBoth && (!hasWeb || !hasYt)) {
+    const fill = markResourceLines(
+      [
+        !hasWeb
+          ? { kind: "Website", title: curated.web.title, url: curated.web.url }
+          : null,
+        !hasYt
+          ? { kind: "YouTube", title: curated.youtube.title, url: curated.youtube.url }
+          : null,
+      ].filter(Boolean),
+      inputs,
+      topic
+    );
+    lines = [...lines.filter((l) => !/video skipped/i.test(l)), ...fill];
+  }
+
+  if (!lines.length) {
+    lines = markResourceLines(
       [
         { kind: "Website", title: curated.web.title, url: curated.web.url },
         { kind: "YouTube", title: curated.youtube.title, url: curated.youtube.url },
       ],
       inputs,
       topic
-    ),
-  ];
+    );
+  }
 
   const llmLinks = Array.isArray(gap.learnLinks) ? gap.learnLinks.filter(Boolean).slice(0, 2) : [];
   const { isBlockedUrl, isPublicYoutube, isAllowedHost, curatedOrDefault } = require("../data/curatedLearningLinks");

@@ -36,8 +36,19 @@ function formatHHMM(totalMinutes) {
   return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
+/**
+ * 12-hour IST range clocks for plan cells.
+ * Same meridian: "9:00–9:15 AM IST"
+ * Crossing noon: "11:30 AM–12:15 PM IST"
+ * Never zero-padded hours, never UTC/GMT.
+ */
 function formatRange(startMin, endMin) {
-  return `${formatHHMM(startMin)} – ${formatHHMM(endMin)} IST`;
+  const a = formatHHMM(startMin); // "9:00 AM"
+  const b = formatHHMM(endMin);
+  const [aTime, aAp] = a.split(/\s+/);
+  const [bTime, bAp] = b.split(/\s+/);
+  if (aAp && bAp && aAp === bAp) return `${aTime}–${bTime} ${aAp} IST`;
+  return `${aTime} ${aAp}–${bTime} ${bAp} IST`;
 }
 
 /** Parse a schedule time cell → minutes from midnight (supports AM/PM and legacy labels) */
@@ -356,11 +367,139 @@ function packBlock(defs, from, to) {
 }
 
 /**
+ * When _activityBlueprint.daily (else _slotOverrides) is set, layout comes ONLY
+ * from that list — no canned 9–6 / OKR / extra-game skeleton.
+ */
+function buildDaySlotMapFromBlueprint(inputs = {}, blueprint, opts = {}) {
+  const includeHomework = opts.includeHomework !== false;
+  const periods = (blueprint.daily || []).filter(
+    (p) => p && String(p.mode || "keep").toLowerCase() !== "hide"
+  );
+
+  const toMin = (hh) => {
+    const s = String(hh || "").trim();
+    const m = s.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  };
+
+  const slots = {};
+  let firstStart = null;
+  let lastEnd = null;
+  const usedKeys = new Set();
+
+  const keyFor = (id, idx) => {
+    const raw = String(id || "custom").trim().toLowerCase();
+    const aliases = {
+      standup: "standup",
+      problem: "problemReview",
+      problemreview: "problemReview",
+      learning: "learning1",
+      break: "break1",
+      sysdesign: "sysdesign",
+      lunch: "lunch",
+      coding: "mid",
+      mid: "mid",
+      project: "project",
+      speak: "speak",
+      placement: "placement",
+      agent: "agent",
+      game: "game",
+      profile: "profileFocus",
+      close: "retro",
+      retro: "retro",
+    };
+    let key = aliases[raw] || raw || `custom${idx}`;
+    if (raw === "learning" && usedKeys.has("learning1")) key = "learning2";
+    if (raw === "break" && usedKeys.has("break1")) {
+      let n = 2;
+      while (usedKeys.has(`break${n}`)) n += 1;
+      key = `break${n}`;
+    }
+    if (usedKeys.has(key)) key = `${key}_${idx}`;
+    usedKeys.add(key);
+    return key;
+  };
+
+  periods.forEach((p, idx) => {
+    const startMin = toMin(p.start);
+    const endMin = toMin(p.end);
+    if (startMin == null || endMin == null || endMin <= startMin) return;
+    const key = keyFor(p.id, idx);
+    slots[key] = {
+      key,
+      startMin,
+      endMin,
+      time: formatRange(startMin, endMin),
+      minutes: endMin - startMin,
+      title: p.title || "",
+      notes: p.notes || "",
+      blueprintId: String(p.id || "").trim(),
+      fromBlueprint: true,
+    };
+    if (firstStart == null || startMin < firstStart) firstStart = startMin;
+    if (lastEnd == null || endMin > lastEnd) lastEnd = endMin;
+  });
+
+  const startMin = firstStart != null ? firstStart : resolveDayWindow(inputs).startMin;
+  const endMin = lastEnd != null ? lastEnd : resolveDayWindow(inputs).endMin;
+  const window = {
+    startMin,
+    endMin,
+    startLabel: formatHHMM(startMin),
+    endLabel: formatHHMM(endMin),
+    spanMin: Math.max(0, endMin - startMin),
+    spanLabel: formatDuration(Math.max(0, endMin - startMin)),
+    fromBlueprint: true,
+  };
+
+  if (includeHomework && !slots.homework) {
+    const hwStart = endMin;
+    const hwEnd = snap5(endMin + 40);
+    slots.homework = {
+      key: "homework",
+      startMin: hwStart,
+      endMin: hwEnd,
+      time: "Tonight",
+      minutes: 40,
+      tonight: true,
+    };
+  }
+
+  return {
+    window,
+    slots,
+    lunch: slots.lunch
+      ? {
+          startMin: slots.lunch.startMin,
+          endMin: slots.lunch.endMin,
+          minutes: slots.lunch.minutes,
+          manual: true,
+        }
+      : { startMin: 12 * 60 + 30, endMin: 13 * 60, minutes: 30, manual: false },
+    break: { minutes: 15, manual: false },
+    breaks: [],
+    fromBlueprint: true,
+  };
+}
+
+/**
  * Continuous day map synced to Basics timing.
+ * Prefer _activityBlueprint.daily (else _slotOverrides) when present.
  * Lunch / break use manual times when provided; otherwise auto.
- * Retro always closes the class day.
+ * Retro always closes the class day (canned path only).
  */
 function buildDaySlotMap(inputs = {}, opts = {}) {
+  try {
+    const { parseActivityBlueprint } = require("./scheduleOverrides");
+    const bp = parseActivityBlueprint(inputs);
+    if (bp && bp.daily && bp.daily.length) {
+      return buildDaySlotMapFromBlueprint(inputs, bp, opts);
+    }
+  } catch (_) {
+    /* fall through to canned map */
+  }
+
   const window = resolveDayWindow(inputs);
   const includeAgent = opts.includeAgent !== false && !opts.problemFirst;
   const includeGame = opts.includeGame !== false;

@@ -6,6 +6,7 @@ const { verifyToken } = require("../middleware/auth");
 
 router.post   ("/generate",        verifyToken, ctrl.generateStatements);
 router.post   ("/quick-create",    verifyToken, ctrl.quickCreate);
+router.post   ("/check",           verifyToken, ctrl.checkDuplicate);
 router.get    ("/yc-inspiration",  verifyToken, ctrl.getYCInspiration);
 router.post   ("/validate",        verifyToken, ctrl.validateProblemFramework);
 router.post   ("/rewrite",         verifyToken, ctrl.rewriteProblemFramework);

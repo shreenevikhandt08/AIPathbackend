@@ -2,6 +2,16 @@ const ProblemStatement = require("../models/Problemstatement");
 const { callLLM }       = require("../utils/llm");
 const { getYCUnicornProblems } = require("../utils/ycSearch");
 const { DT_PLAYBOOK, getExactPlaybookQuestions } = require("../utils/dtPlaybookStructure");
+const {
+  fingerprintStatement,
+  fingerprintFromParts,
+  isFingerprintTaken,
+  extractProvenance,
+  matchInspiration,
+  loadAllFingerprintsFromDb,
+  findByFingerprint,
+} = require("../utils/problemStatementFingerprint");
+const { lookupDuplicates } = require("../utils/problemStatementOwners");
 
 const FIVE_PILLARS = [
   "Center for Creativity (CFC)",
@@ -34,7 +44,17 @@ exports.generateStatements = async (req, res) => {
       aiIntegration   = true, // always default ON
       problemContext  = "",   // YC/unicorn inspired seed
       courseModules   = [],   // [{ moduleName, concepts }] - learning connectivity
+      uniqueOnly      = true,
+      excludeFingerprints = [],
+      company: bodyCompany = "",
+      year: bodyYear = "",
+      sourceKind: bodySourceKind = "",
+      sourceLabel: bodySourceLabel = "",
+      detailed       = false,
+      minWords       = 60,
     } = req.body;
+    const wantDetailed = detailed === true || detailed === "true";
+    const wordFloor = Number(minWords) || (wantDetailed ? 280 : 60);
 
     // Subjects are NO LONGER REQUIRED - removed subjects validation
     // User provides course modules instead to establish learning connectivity
@@ -126,6 +146,10 @@ using the phase each week falls under per the breakdown above.`.trim();
 
     const numStatements = Math.min(count, 5);
 
+    const descriptionRule = wantDetailed
+      ? `DESCRIPTION MUST BE FULL AND DETAILED — 280–450 words with labeled sections (Context, Users, Workaround, Why now, Product, Constraints, Metric, Analog).`
+      : `DESCRIPTION MUST BE SHORT AND SWEET — 3 to 6 sentences (~${wordFloor}–120 words). Cover only: who has the pain, what fails today, what to build, one success metric, analog company + year. No multi-paragraph essay.`;
+
     const prompt = `
 You are a mentor at SNS Innovation Hub helping a BEGINNER engineering student do their first AI project using the SNS Design Thinking Playbook.
 
@@ -136,6 +160,7 @@ ${learningBlock}
 ${clubBlock ? `CLUBS: ${clubBlock}` : ""}
 PILLARS: ${activePillars.slice(0,3).join(", ")}
 DIFFICULTY: ${difficulty} | TIMELINE: ${timeline} | TOTAL WEEKS: ${totalWeeks}
+STATEMENT LENGTH: ${descriptionRule}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SNS DT PLAYBOOK — EXACT DAY-BY-DAY TABLE (MANDATORY)
@@ -205,7 +230,9 @@ Return ONLY valid JSON — no markdown, no trailing commas:
   "statements": [
     {
       "title": "Specific startup-style project title",
-      "description": "2-3 sentences: what problem, who has it, why now",
+      "description": ${wantDetailed
+        ? `"Full detailed problem statement (280–450 words)"`
+        : `"Short 3–6 sentence problem statement: who has the pain, what fails today, what to build, one success metric, analog company + year."`},
       "objectives": ["Obj 1", "Obj 2", "Obj 3"],
       "deliverables": ["Final deliverable 1", "Final deliverable 2", "Final deliverable 3"],
       "timeline": "${timeline}",
@@ -372,7 +399,7 @@ IMPORTANT:
     }
 
     const droppedTitles = results.filter(missingSchedule).map(s => s?.title).filter(Boolean);
-    const statements = results.filter(s => !missingSchedule(s));
+    let statements = results.filter(s => !missingSchedule(s));
 
     if (!statements.length) {
       return res.status(500).json({
@@ -381,14 +408,91 @@ IMPORTANT:
       });
     }
 
-    const saved = await Promise.all(
-      statements.map(s =>
-        ProblemStatement.create({
+    // Skip fingerprints already stored (any user) or excluded by the client
+    let taken = Array.isArray(excludeFingerprints)
+      ? excludeFingerprints.map(String).filter(Boolean)
+      : [];
+    if (uniqueOnly !== false) {
+      try {
+        const dbTaken = await loadAllFingerprintsFromDb(ProblemStatement);
+        taken = Array.from(new Set([...taken, ...dbTaken]));
+      } catch (e) {
+        console.warn("fingerprint load failed:", e.message);
+      }
+    }
+
+    const skipped = [];
+    statements = statements.filter((s) => {
+      const fp = fingerprintFromParts(s.title, s.description);
+      if (uniqueOnly !== false && isFingerprintTaken(fp || s.description, taken)) {
+        skipped.push(s.title || fp);
+        return false;
+      }
+      if (fp) taken.push(fp);
+      return true;
+    });
+
+    if (!statements.length) {
+      return res.status(409).json({
+        success: false,
+        error: "Every generated statement fingerprint is already taken. Try a different seed or filters.",
+        skipped,
+      });
+    }
+
+    // Origin provenance from body + YC/Unicorn inspiration match
+    let inspirationPool = [];
+    try {
+      const insp = await getYCUnicornProblems(false);
+      inspirationPool = Array.isArray(insp?.data) ? insp.data : [];
+    } catch (_) { /* optional */ }
+
+    // Keep generate descriptions short unless detailed:true
+    const clipShort = (text) => {
+      try {
+        const { clipToShortStatement } = require("../utils/problemFrameworkValidate");
+        return clipToShortStatement(text, {
+          maxSentences: 6,
+          maxWords: Math.max(90, Math.min(160, wordFloor + 60)),
+        });
+      } catch (_) {
+        const parts = String(text || "").match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [String(text || "")];
+        return parts.slice(0, 6).join(" ").trim();
+      }
+    };
+
+    const saved = [];
+    for (const s of statements) {
+      if (!wantDetailed && s.description) {
+        s.description = clipShort(s.description);
+      }
+      const blob = `${s.title || ""} ${s.description || ""}`;
+      const idea = matchInspiration(blob, inspirationPool) || matchInspiration(problemContext, inspirationPool);
+      const prov = extractProvenance(
+        {
+          company: bodyCompany || s.company,
+          year: bodyYear || s.year,
+          sourceKind: bodySourceKind || s.sourceKind,
+          sourceLabel: bodySourceLabel || s.sourceLabel,
+        },
+        idea
+      );
+      const fp = fingerprintFromParts(s.title, s.description);
+      try {
+        const doc = await ProblemStatement.create({
           userId,
           title:              s.title,
           clubs:              clubs,
           pillars:            s.pillars || activePillars.slice(0, 3),
           description:        s.description,
+          fingerprint:        fp,
+          company:            prov.company,
+          year:               prov.year,
+          sourceKind:         prov.sourceKind,
+          sourceLabel:        prov.sourceLabel,
+          batch:              prov.batch,
+          workingOn:          prov.workingOn,
+          sourceUrl:          prov.url,
           objectives:         s.objectives || [],
           deliverables:       s.deliverables || [],
           weeklyDeliverables: s.weeklyDeliverables || {},
@@ -400,24 +504,44 @@ IMPORTANT:
           aiDetails:          s.aiDetails || "",
           tags:               s.tags || [],
           problemBreakdown:   s.problemBreakdown || null,
-          
-          // DAY-BY-DAY SCHEDULE (NEW)
           dailySchedule:         s.dailySchedule || [],
-          // CONNECTIVITY FIELDS
           learningPrerequisites: s.learningPrerequisites || [],
           systemDesignPhase:     s.systemDesignPhase || { isRequired: true, estimatedHours: 4 },
           codingPlatforms:       s.codingPlatforms || [],
           courseModules:         s.courseModules || [],
-        })
-      )
-    );
+        });
+        saved.push(doc);
+      } catch (createErr) {
+        if (createErr?.code === 11000) {
+          skipped.push(s.title || fp);
+          continue;
+        }
+        throw createErr;
+      }
+    }
+
+    if (!saved.length) {
+      return res.status(409).json({
+        success: false,
+        error: "All generated statements collided with existing fingerprints.",
+        skipped,
+      });
+    }
+
+    const warnings = [];
+    if (droppedTitles.length) {
+      warnings.push(
+        `${droppedTitles.length} statement(s) were dropped because the AI didn't produce a valid schedule: ${droppedTitles.join(", ")}`
+      );
+    }
+    if (skipped.length) {
+      warnings.push(`${skipped.length} statement(s) skipped (fingerprint already taken)`);
+    }
 
     return res.json({
       success: true,
       data: saved,
-      ...(droppedTitles.length
-        ? { warning: `${droppedTitles.length} statement(s) were dropped because the AI didn't produce a valid schedule for them: ${droppedTitles.join(", ")}` }
-        : {}),
+      ...(warnings.length ? { warning: warnings.join(" · ") } : {}),
     });
   } catch (err) {
     console.error("generateStatements error:", err.message);
@@ -425,17 +549,87 @@ IMPORTANT:
   }
 };
 
+function escapeRegExp(text = "") {
+  return String(text).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+}
+
+function buildAccuracyChecks(report = {}, filters = {}) {
+  const checks = [];
+  checks.push({
+    id: "framework-yc-or-unicorn",
+    label: "Framework fit (YC OR Unicorn)",
+    pass: Boolean(report.fitsYC || report.fitsUnicorn),
+    note: report.fitsYC || report.fitsUnicorn
+      ? "YC " + (report.ycPassCount || 0) + "/" + (report.ycTotal || 0) + ", Unicorn " + (report.unicornPassCount || 0) + "/" + (report.unicornTotal || 0)
+      : "Need stronger YC/Unicorn framing signals",
+    evidence: [report.verdict || ""].filter(Boolean),
+  });
+  checks.push({
+    id: "thrust-map",
+    label: "SNS thrust mapping (tech OR industry)",
+    pass: Boolean(report.fits77),
+    note: report.fits77 ? "Mapped to SNS thrust area" : "Map to at least one SNS tech or industry",
+    evidence: [
+      report.primaryTech ? "Tech: " + report.primaryTech : "",
+      report.primaryVertical ? "Industry: " + report.primaryVertical : "",
+    ].filter(Boolean),
+  });
+  checks.push({
+    id: "source-freshness",
+    label: "Source freshness & traceability",
+    pass: Boolean(report.sourceUrl || report.sourceFetchedAt),
+    note: report.sourceFetchedAt ? "Source timestamp available" : "Using available source metadata",
+    evidence: [
+      report.sourceUrl ? "sourceUrl: " + report.sourceUrl : "",
+      report.sourceFetchedAt ? "fetchedAt: " + report.sourceFetchedAt : "",
+      Number.isFinite(Number(report.sourceConfidence)) ? "confidence: " + Number(report.sourceConfidence).toFixed(2) : "",
+    ].filter(Boolean),
+  });
+  if (filters.kind && filters.kind !== "all") {
+    checks.push({
+      id: "requested-kind",
+      label: "Requested source kind",
+      pass: report.sourceKind === filters.kind || report.sourceKind === "both",
+      note: "Requested kind: " + filters.kind,
+      evidence: ["resolved: " + (report.sourceKind || "unknown")],
+    });
+  }
+  if (filters.year) {
+    checks.push({
+      id: "requested-year",
+      label: "Requested source year",
+      pass: String(report.year || "") === String(filters.year),
+      note: "Requested year: " + filters.year,
+      evidence: ["resolved: " + (report.year || "unknown")],
+    });
+  }
+  checks.push({
+    id: "requested-window",
+    label: "Requested source window",
+    pass: true,
+    note: "Applied window: " + (filters.window || "recent"),
+    evidence: [
+      "kind: " + (filters.kind || "all"),
+      "mode: " + (filters.mode || "all"),
+      filters.month ? "month: " + filters.month : "",
+    ].filter(Boolean),
+  });
+  return checks;
+}
+
 exports.getYCInspiration = async (req, res) => {
   try {
     const forceRefresh = req.query.refresh === "1" || req.query.refresh === "true";
     const yearRaw = req.query.year;
     const monthRaw = req.query.month;
+    const window = String(req.query.window || "recent").toLowerCase();
+    const kind = String(req.query.kind || "all").toLowerCase();
     const result = await getYCUnicornProblems(forceRefresh, {
-      mode: req.query.mode || "all", // live | classic | all
-      kind: req.query.kind || "all", // yc | unicorn | all
+      mode: req.query.mode || "all",
+      kind,
       year: yearRaw != null && yearRaw !== "" ? Number(yearRaw) : null,
       month: monthRaw != null && monthRaw !== "" ? Number(monthRaw) : null,
-      window: req.query.window || "recent", // recent | month | quarter | year
+      window,
     });
     return res.json({ success: true, ...result });
   } catch (err) {
@@ -454,10 +648,55 @@ exports.validateProblemFramework = async (req, res) => {
     const problemText = req.body.problemText || req.body.problem || "";
     const useLLM = req.body.useLLM !== false;
     const numDays = req.body.numDays || req.body.days || 5;
-    const report = await validateProblemStatement(problemText, { useLLM, numDays });
+    const sourceFilters = {
+      year: req.body.year != null && req.body.year !== "" ? Number(req.body.year) : null,
+      month: req.body.month != null && req.body.month !== "" ? Number(req.body.month) : null,
+      kind: req.body.kind || "all",
+      window: req.body.window || "recent",
+      mode: req.body.mode || "all",
+    };
+
+    const report = await validateProblemStatement(problemText, { useLLM, numDays, sourceFilters });
+    const inspiration = await getYCUnicornProblems(false, sourceFilters);
+    const inspirationRows = Array.isArray(inspiration?.data) ? inspiration.data : [];
+    const matched = matchInspiration(problemText, inspirationRows);
+    const prov = extractProvenance(report, matched);
+
+    let dbMeta = null;
+    const companyNeedle = prov.company || report.company || matched?.company || "";
+    if (companyNeedle) {
+      dbMeta = await ProblemStatement.findOne(
+        { company: { $regex: new RegExp(escapeRegExp(companyNeedle), "i") } },
+        { company: 1, year: 1, sourceKind: 1, sourceLabel: 1, sourceUrl: 1, batch: 1, updatedAt: 1, createdAt: 1 }
+      ).sort({ updatedAt: -1 }).lean();
+    }
+
+    const mergedReport = {
+      ...report,
+      sourceKind: prov.sourceKind || report.sourceKind || dbMeta?.sourceKind || matched?.kind || "",
+      sourceLabel: prov.sourceLabel || report.sourceLabel || dbMeta?.sourceLabel || matched?.source || "",
+      company: prov.company || report.company || dbMeta?.company || "",
+      year: prov.year || report.year || dbMeta?.year || (matched?.year != null ? String(matched.year) : ""),
+      sourceUrl: prov.url || report.sourceUrl || dbMeta?.sourceUrl || matched?.sourceUrl || "",
+      sourceFetchedAt: matched?.fetchedAt || dbMeta?.updatedAt || dbMeta?.createdAt || inspiration?.generatedDate || null,
+      sourceConfidence: Number.isFinite(Number(matched?.confidence))
+        ? Number(matched.confidence)
+        : inspiration?.isLive
+          ? 0.8
+          : 0.6,
+      sourceMeta: {
+        isLive: !!inspiration?.isLive,
+        cached: !!inspiration?.cached,
+        staleCacheUsed: !!inspiration?.staleCacheUsed,
+        ttlMs: inspiration?.ttlMs || null,
+      },
+    };
+
+    mergedReport.checks = buildAccuracyChecks(mergedReport, sourceFilters);
+
     return res.json({
       success: true,
-      report,
+      report: mergedReport,
       catalogs: {
         innovationTechnologies: INNOVATION_TECHNOLOGIES.map((t) => ({ id: t.id, name: t.name })),
         industryVerticals: INDUSTRY_VERTICALS.map((v) => ({ id: v.id, name: v.name })),
@@ -475,16 +714,44 @@ exports.rewriteProblemFramework = async (req, res) => {
     const { rewriteProblemStatement } = require("../utils/problemFrameworkValidate");
     const problemText = req.body.problemText || req.body.problem || "";
     const framework = req.body.framework || "all";
-    const rewritten = await rewriteProblemStatement(problemText, framework, {
-      tech: req.body.tech || "",
-      vertical: req.body.vertical || "",
+    const result = await rewriteProblemStatement(problemText, framework, {
+      tech: req.body.tech || (Array.isArray(req.body.techs) ? req.body.techs[0] : "") || "",
+      vertical: req.body.vertical || (Array.isArray(req.body.verticals) ? req.body.verticals[0] : "") || "",
+      techs: req.body.techs || [],
+      verticals: req.body.verticals || [],
       mode: req.body.mode || "",
       seed: req.body.seed || "",
       numDays: req.body.numDays || req.body.days || req.body.totalDays || 5,
+      count: req.body.count || 1,
+      variation: req.body.variation || 0,
+      uniqueOnly: req.body.uniqueOnly !== false,
+      excludeFingerprints: req.body.excludeFingerprints || [],
+      excludeAssigned: req.body.excludeAssigned !== false,
+      detailed: req.body.detailed === true,
+      minWords: req.body.minWords || 0,
+      year: req.body.year || "",
+      kind: req.body.kind || "",
     });
-    return res.json({ success: true, rewritten });
+    const options = Array.isArray(result?.options)
+      ? result.options
+      : Array.isArray(result?.candidates)
+        ? result.candidates
+        : result
+          ? [result]
+          : [];
+    const rewritten = result?.rewritten || options[0] || result;
+    return res.json({
+      success: true,
+      rewritten,
+      options,
+      candidates: options,
+    });
   } catch (err) {
     console.error("rewriteProblemFramework:", err.message);
+    const msg = String(err.message || "");
+    if (/already taken|fingerprint/i.test(msg)) {
+      return res.status(409).json({ success: false, error: msg });
+    }
     return res.status(500).json({ success: false, error: err.message });
   }
 };
@@ -533,22 +800,96 @@ exports.deleteStatement = async (req, res) => {
 exports.quickCreate = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { title, description } = req.body;
+    const {
+      title,
+      description,
+      fingerprint: bodyFp = "",
+      uniqueOnly = true,
+      claimExclusive = true,
+      allowDuplicate = false,
+      sourceKind = "",
+      company = "",
+      year = "",
+      sourceLabel = "",
+      batch = "",
+      workingOn = "",
+      sourceUrl = "",
+    } = req.body;
 
     if (!title || !String(title).trim()) {
       return res.status(400).json({ success: false, error: "title is required" });
     }
 
-    const doc = await ProblemStatement.create({
-      userId,
-      title: String(title).trim().slice(0, 200),
-      description: (description && String(description).trim()) || String(title).trim(),
-      dailySchedule: [],
-    });
+    const desc = (description && String(description).trim()) || String(title).trim();
+    const fp =
+      fingerprintStatement(bodyFp) ||
+      fingerprintFromParts(title, desc);
+
+    // Duplicate = reminder, not a block. Without allowDuplicate we answer 409 with
+    // code DUPLICATE_STATEMENT and the list of people who already hold it; the UI
+    // then lets the user reuse the same problem for their own plan or pick another.
+    if (!allowDuplicate && fp) {
+      const matches = await lookupDuplicates(ProblemStatement, fp, userId);
+      if (matches.length) {
+        return res.status(409).json({
+          success: false,
+          code: "DUPLICATE_STATEMENT",
+          error: "This problem statement already exists.",
+          fingerprint: fp,
+          existingId: matches[0].statementId,
+          matches,
+        });
+      }
+    }
+
+    let inspiration = null;
+    try {
+      const insp = await getYCUnicornProblems(false);
+      inspiration = matchInspiration(`${title} ${desc}`, Array.isArray(insp?.data) ? insp.data : []);
+    } catch (_) { /* optional */ }
+    const prov = extractProvenance(
+      { sourceKind, company, year, sourceLabel, batch, workingOn, sourceUrl },
+      inspiration
+    );
+
+    let doc;
+    try {
+      doc = await ProblemStatement.create({
+        userId,
+        title: String(title).trim().slice(0, 200),
+        description: desc,
+        fingerprint: fp,
+        company: prov.company,
+        year: prov.year,
+        sourceKind: prov.sourceKind,
+        sourceLabel: prov.sourceLabel,
+        batch: prov.batch,
+        workingOn: prov.workingOn,
+        sourceUrl: prov.url,
+        dailySchedule: [],
+      });
+    } catch (createErr) {
+      throw createErr;
+    }
 
     return res.json({ success: true, data: doc });
   } catch (err) {
     console.error("quickCreate error:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// ── POST /api/problem-statement/check  { title?, description }  ──────────────
+// Tells the UI whether a statement already exists and who holds it.
+exports.checkDuplicate = async (req, res) => {
+  try {
+    const { title = "", description = "", text = "" } = req.body || {};
+    const fp = fingerprintFromParts(title, description || text) || fingerprintStatement(text);
+    if (!fp) return res.json({ success: true, exists: false, matches: [] });
+    const matches = await lookupDuplicates(ProblemStatement, fp, req.user.id);
+    return res.json({ success: true, exists: matches.length > 0, fingerprint: fp, matches });
+  } catch (err) {
+    console.error("checkDuplicate:", err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 };

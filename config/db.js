@@ -10,6 +10,16 @@ async function connectDB() {
       serverSelectionTimeoutMS: 15001,
     });
     console.log("✅ MongoDB connected");
+    // Duplicate problem statements are allowed now (UI shows who already has one).
+    // Drop the legacy unique index if it still exists.
+    try {
+      await mongoose.connection.collection("problemstatements").dropIndex("uniq_statement_fingerprint");
+      console.log("🗂  Dropped legacy unique index uniq_statement_fingerprint");
+    } catch (e) {
+      if (!/index not found|ns not found/i.test(String(e.message))) {
+        console.warn("Index cleanup skipped:", e.message);
+      }
+    }
   } catch (err) {
     console.error("❌ MongoDB connection failed:", err.message);
     console.error(

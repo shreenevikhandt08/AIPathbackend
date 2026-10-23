@@ -11,6 +11,17 @@ const { callLLM }      = require("../utils/llm");
 const { buildFullCalendar, toDisplayDate, abbrevSubject } = require("../utils/calendarUtils");
 const { generateDailyPlan, polishDailyPlan } = require("../utils/dailyPlanGenerator");
 const { enrichMissingDsaSd } = require("../utils/enrichDsaSdFromProblem");
+const {
+  normalizeForceOverride,
+  forceOverridePromptSection,
+  forceOverrideSyllabusSection,
+  mergeForceFromSnapshot,
+  forceApplyOn,
+} = require("../utils/forceOverride");
+const {
+  applyScheduleOverridesToDailyRows,
+  applyHomeworkOverridesToPlan,
+} = require("../utils/scheduleOverrides");
 
 const JWT_SECRET = process.env.JWT_SECRET || "academic_planner_secret_key";
 
@@ -447,6 +458,8 @@ async function refineExistingPlan(existingPlan, userFeedback, module, opts = {})
   if (!existingPlan || !existingPlan.rows) throw new Error("No existing plan to refine");
   const surface =
     module === "weekly" ? "weekly" : module === "homework" ? "homework" : "daily";
+  // Weekly: must-apply only. Daily/homework: surface-specific customisation blocks.
+  const forceSection = forceOverridePromptSection(opts.inputs || {}, surface);
   let lessonsBlock = "";
   try {
     const { recordFeedbackLessons, attachEngineLessons } = require("../utils/engineLessons");
@@ -461,17 +474,35 @@ async function refineExistingPlan(existingPlan, userFeedback, module, opts = {})
   } catch (e) {
     console.warn("Engine lessons on refine skipped:", e.message);
   }
-  if (module === "daily") return await refineDailyPlan(existingPlan, userFeedback, lessonsBlock);
-  if (module === "weekly") return await refineWeeklyPlan(existingPlan, userFeedback, lessonsBlock);
-  if (module === "homework") return await refineHomeworkPlan(existingPlan, userFeedback, lessonsBlock, opts);
+  if (module === "daily") {
+    let refined = await refineDailyPlan(existingPlan, userFeedback, lessonsBlock, forceSection);
+    try {
+      refined = {
+        ...refined,
+        rows: applyScheduleOverridesToDailyRows(refined.rows || [], opts.inputs || {}),
+      };
+    } catch (_) {}
+    return refined;
+  }
+  if (module === "weekly") {
+    // Weekly never applies _slotOverrides / _homeworkOverrides
+    return await refineWeeklyPlan(existingPlan, userFeedback, lessonsBlock, forceSection);
+  }
+  if (module === "homework") {
+    let refined = await refineHomeworkPlan(existingPlan, userFeedback, lessonsBlock, opts, forceSection);
+    try {
+      refined = applyHomeworkOverridesToPlan(refined, opts.inputs || {});
+    } catch (_) {}
+    return refined;
+  }
   return existingPlan;
 }
 
-async function refineDailyPlan(existingPlan, userFeedback, lessonsBlock = "") {
+async function refineDailyPlan(existingPlan, userFeedback, lessonsBlock = "", forceSection = "") {
   const refinementPrompt = `
 You are an academic schedule refinement expert. Modify the EXISTING daily schedule based on user feedback.
 
-EXISTING SCHEDULE (${existingPlan.rows.length} rows):
+${forceSection}EXISTING SCHEDULE (${existingPlan.rows.length} rows):
 ${JSON.stringify(existingPlan.rows.slice(0, 10), null, 2)}...
 
 USER FEEDBACK: "${userFeedback}"
@@ -506,11 +537,11 @@ Return ONLY valid JSON:
   return existingPlan;
 }
 
-async function refineWeeklyPlan(existingPlan, userFeedback, lessonsBlock = "") {
+async function refineWeeklyPlan(existingPlan, userFeedback, lessonsBlock = "", forceSection = "") {
   const refinementPrompt = `
 You are an academic plan refinement expert. Modify the EXISTING weekly plan based on feedback.
 
-EXISTING WEEKLY PLAN:
+${forceSection}EXISTING WEEKLY PLAN:
 ${JSON.stringify(existingPlan, null, 2)}
 
 USER FEEDBACK: "${userFeedback}"
@@ -538,13 +569,13 @@ Return ONLY valid JSON with EXACT same structure:
   return existingPlan;
 }
 
-async function refineHomeworkPlan(existingPlan, userFeedback, lessonsBlock = "", opts = {}) {
+async function refineHomeworkPlan(existingPlan, userFeedback, lessonsBlock = "", opts = {}, forceSection = "") {
   const focusDay = String(opts.focusDayKey || "").trim();
   const sampleRows = existingPlan.rows.slice(0, 12);
   const refinementPrompt = `
 You refine Tonight's Homework plans for a campus academic planner.
 
-EXISTING HOMEWORK PLAN (${existingPlan.rows.length} rows). Each row is [Day, Time, Activity, Content].
+${forceSection}EXISTING HOMEWORK PLAN (${existingPlan.rows.length} rows). Each row is [Day, Time, Activity, Content].
 Activity is usually "Tonight's Homework". Content is multi-line tasks (LeetCode, Case study, Agent Workbench, LinkedIn, Exercism…).
 
 SAMPLE / STRUCTURE:
@@ -556,14 +587,15 @@ ${lessonsBlock ? `\n${lessonsBlock}\n` : ""}
 
 RULES:
 1. DO NOT invent a brand-new plan from scratch — refine content based on feedback.
-2. Keep EXACTLY ${existingPlan.rows.length} rows. Keep Day / Time / Activity unless feedback asks to change them.
-3. Keep task title first lines detectable: LeetCode, Case study, Agent Workbench, LinkedIn, Exercism.
-4. Keep Learning → SD → LC → Case → Project connectivity when present.
-5. Prefer short, clear beginner wording.
-6. Agent Workbench: keep FULL bank/RAG task definition (Problem + What to build + Steps 1–N + Done when). Never paste the student's long problem essay into "Problem". Only a short "Product glance" line (max ~12 words) may mention their product.
-7. LeetCode: sweet and small — Why + Link + Do + Apply + Done. No long multi-step dumps.
-8. Obey ENGINE QUALITY LESSONS — do not reintroduce past mistakes.
-9. Return ONLY valid JSON — no markdown fences.
+2. Keep EXACTLY ${existingPlan.rows.length} rows. Keep Day / Activity unless feedback asks to change them.
+3. Time column MUST stay "Tonight" (or empty) — NEVER put clock times on homework rows. Homework is after class.
+4. Keep task title first lines detectable: LeetCode, Case study, Agent Workbench, LinkedIn, Exercism.
+5. Keep Learning → SD → LC → Case → Project connectivity when present.
+6. Prefer short, clear beginner wording.
+7. Agent Workbench: keep FULL bank/RAG task definition (Problem + What to build + Steps 1–N + Done when). Never paste the student's long problem essay into "Problem". Only a short "Product glance" line (max ~12 words) may mention their product.
+8. LeetCode: sweet and small — Why + Link + Do + Apply + Done. No long multi-step dumps.
+9. Obey ENGINE QUALITY LESSONS — do not reintroduce past mistakes.
+10. Return ONLY valid JSON — no markdown fences.
 
 Return ONLY:
 {
@@ -1015,13 +1047,36 @@ async function saveSubjectsForUser(req, subjects, syllabusText) {
 }
 
 async function buildPlanContext(inputs, req = null) {
+  inputs = normalizeForceOverride(inputs || {});
   // Hands-on short syllabus file when Subjects upload is empty / huge PDFs avoided
   try {
     const { ensureSyllabusFromHandsOnFile } = require("../utils/loadCollegeSyllabusInput");
     inputs = await ensureSyllabusFromHandsOnFile(inputs || {});
+    inputs = normalizeForceOverride(inputs || {});
   } catch (_) {
     /* optional */
   }
+
+  // Honor activity blueprint day window when present (Basics already baked into list)
+  try {
+    const { parseActivityBlueprint } = require("../utils/scheduleOverrides");
+    const bp = parseActivityBlueprint(inputs);
+    if (bp) {
+      if (bp.dayStart && !inputs._dailyStart) inputs._dailyStart = bp.dayStart;
+      if (bp.dayEnd && !inputs._dailyEnd) inputs._dailyEnd = bp.dayEnd;
+      if (bp.lunchStart && !inputs._lunchStart) inputs._lunchStart = bp.lunchStart;
+      if (bp.lunchEnd && !inputs._lunchEnd) inputs._lunchEnd = bp.lunchEnd;
+      if (bp.numDays && !inputs._numDays) inputs._numDays = bp.numDays;
+      if (Array.isArray(bp.breaks) && bp.breaks.length && !inputs._breaks) {
+        inputs._breaks = JSON.stringify(bp.breaks);
+      }
+      console.log(
+        `📐 Activity blueprint: ${bp.daily.length} period(s)` +
+          (bp.dayStart && bp.dayEnd ? ` · ${bp.dayStart}–${bp.dayEnd}` : "") +
+          (bp.numDays ? ` · ${bp.numDays} days` : "")
+      );
+    }
+  } catch (_) {}
 
   // Weeks are just a 5-day grouping convenience for the underlying generator.
   // The real unit of input is "N days" (numDays), so derive week count from
@@ -1036,7 +1091,10 @@ async function buildPlanContext(inputs, req = null) {
   // ── Mode: DSA/DT + optional supporting subject syllabus ───────────────────
   const isDSAMode = inputs?._plannerMode === "dsa_dt_playbook";
 
-  // Problem-only path: RAG-fill missing DSA / System Design from the web + problem
+  // SysDesign / DSA:
+  //   _skip* true  → never RAG / invent
+  //   field empty + on → RAG from problem (enrichMissingDsaSd)
+  //   field filled     → use user syllabus only (enrich skips)
   if (isDSAMode && (inputs?.problem || "").trim()) {
     try {
       const { enriched } = await enrichMissingDsaSd(inputs, totalWeeks);
@@ -1047,6 +1105,10 @@ async function buildPlanContext(inputs, req = null) {
   }
 
   let syllabusText;
+  const forceSyllabus = forceOverrideSyllabusSection(inputs);
+  if (forceApplyOn(inputs)) {
+    console.log("⚡ HARD USER OVERRIDE active — force block wins over DT/DSA/timing defaults");
+  }
   if (isDSAMode) {
     const dsaPart  = inputs?.dsaSyllabus   || "";
     const sdPart   = inputs?.systemDesign  || "";
@@ -1055,6 +1117,7 @@ async function buildPlanContext(inputs, req = null) {
     const intPart  = inputs?.interest      || "";
     const assessPart = inputs?.assessment  || "";
     syllabusText = [
+      forceSyllabus,
       dsaPart  ? "=== DSA SYLLABUS ===\n" + dsaPart  : "",
       sdPart   ? "=== SYSTEM DESIGN SYLLABUS ===\n" + sdPart : "",
       subPart  ? "=== SUPPORTING SUBJECT SYLLABUS ===\n" + subPart : "",
@@ -1074,6 +1137,7 @@ async function buildPlanContext(inputs, req = null) {
     );
   } else {
     syllabusText = [
+      forceSyllabus,
       inputs?.syllabus || "",
       inputs?._productStageBlock ? "=== PRODUCT CHECKPOINTS ===\n" + inputs._productStageBlock : "",
     ]
@@ -1184,11 +1248,13 @@ async function buildPlanContext(inputs, req = null) {
 
 async function generate(req, res) {
   try {
-    const { module, inputs, feedback, existingPlan } = req.body;
+    const { module, feedback, existingPlan, forceApply } = req.body;
+    const inputs = normalizeForceOverride(req.body.inputs || {}, { feedback, forceApply });
+    req.body.inputs = inputs;
     const userId = req.user?.id || req.user?._id || null;
     let plan;
     if (existingPlan && feedback && feedback.trim()) {
-      plan = await refineExistingPlan(existingPlan, feedback, module, { userId });
+      plan = await refineExistingPlan(existingPlan, feedback, module, { userId, inputs });
     } else {
       const { themes, examAnalysis } = await buildPlanContext(inputs || {}, req);
       if (module === "daily") {
@@ -1236,7 +1302,10 @@ async function generateAll(req, res) {
   console.log("=== /api/generate-all called ===");
   console.log("Body received:", JSON.stringify(req.body).slice(0, 200));
 
-  const { inputs, existingPlans, feedback } = req.body;
+  let { inputs, existingPlans, feedback, forceApply } = req.body;
+  // Stack: absorb top-level Must apply (feedback + forceApply) into inputs last
+  inputs = normalizeForceOverride(inputs || {}, { feedback, forceApply });
+  req.body.inputs = inputs;
   const repoMode = String(inputs?._repoMode || "generate_new").toLowerCase();
   // existing | generate_new | existing_regen | manual
 
@@ -1323,12 +1392,12 @@ async function generateAll(req, res) {
     const userId = req.user?.id || req.user?._id || null;
     try {
       if (existingPlans.weekly) {
-        plans["weekly"] = await refineExistingPlan(existingPlans.weekly, feedback, "weekly", { userId });
+        plans["weekly"] = await refineExistingPlan(existingPlans.weekly, feedback, "weekly", { userId, inputs });
       }
     } catch (err) { console.error("Weekly refinement failed:", err.message); errors["weekly"] = err.message; }
     try {
       if (existingPlans.daily) {
-        plans["daily"] = await refineExistingPlan(existingPlans.daily, feedback, "daily", { userId });
+        plans["daily"] = await refineExistingPlan(existingPlans.daily, feedback, "daily", { userId, inputs });
       }
     } catch (err) { console.error("Daily refinement failed:", err.message); errors["daily"] = err.message; }
     if (Object.keys(plans).length > 0) return res.json({ success: true, plans, errors, repo: repoMeta });
@@ -1409,6 +1478,9 @@ async function generateAll(req, res) {
       const { doc: match, matchType } = await resolveRepoSeed(seedInputs);
       if (match?.plan?.rows?.length) {
         const userId = req.user?.id || req.user?._id || null;
+        // Restore force override from saved snapshot when regenerating
+        inputs = mergeForceFromSnapshot(inputs, match.inputsSnapshot || {});
+        req.body.inputs = inputs;
         let parts = inputs?._repoRegenParts;
         if (typeof parts === "string") {
           try { parts = JSON.parse(parts); } catch { parts = String(parts).split(",").map((s) => s.trim()); }
@@ -1417,7 +1489,7 @@ async function generateAll(req, res) {
           parts,
           [feedback, inputs?._repoAdaptNote].filter(Boolean).join("\n")
         );
-        plans.daily = await refineExistingPlan(match.plan, regenFeedback, "daily", { userId });
+        plans.daily = await refineExistingPlan(match.plan, regenFeedback, "daily", { userId, inputs });
         plans.weekly = deriveWeekly(plans.daily);
         if (!plans.weekly) errors.weekly = "Weekly could not be derived after regenerate";
         const hwRows = (plans.daily.rows || []).filter((r) => /homework/i.test(String(r[2] || "")));
@@ -1543,12 +1615,14 @@ async function generateAll(req, res) {
 async function refine(req, res) {
   try {
     const { module, existingPlan, feedback, focusDayKey } = req.body;
+    const inputs = normalizeForceOverride(req.body.inputs || {});
     if (!existingPlan || !feedback)
       return res.status(400).json({ success: false, error: "Missing existingPlan or feedback" });
     const userId = req.user?.id || req.user?._id || null;
     const refinedPlan = await refineExistingPlan(existingPlan, feedback, module, {
       userId,
       focusDayKey: focusDayKey || "",
+      inputs,
     });
     res.json({ success: true, plan: refinedPlan });
   } catch (err) {
@@ -1582,6 +1656,10 @@ async function calendar(req, res) {
 }
 
 async function uploadFiles(req, res) {
+  // upload.any() — accepts any fieldname. First-class extract fields include
+  // problem, syllabus, questions, dsaSyllabus, systemDesign, assessment,
+  // capability, interest, domain, AND manualPrompt (force-override text + files).
+  // FE appends extracted[manualPrompt] text into textInputs.manualPrompt.
   try {
     const s3 = require("../utils/s3Storage");
     const UploadedFile = require("../models/UploadedFile");

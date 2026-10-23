@@ -1,18 +1,18 @@
 {
-  "updatedAt": "2026-09-21T04:59:46.757Z",
+  "updatedAt": "2026-10-23T09:51:23.363Z",
   "lessons": [
     {
       "ruleKey": "full-day-connectivity",
       "rule": "EVERY activity (Learning, SD, Coding, Speak, Case, Agent, Placement, Homework, Project Build) must name the student's problem in 1 line and say how today's work applies to building that product. Never leave a slot as generic practice with no project link.",
-      "sourceFeedback": "Redo Tonight's Homework only: simpler beginner wording, clear A→B→C night path, keep Learning→SD→LC→Case→Project connectivity, Easy-leaning LC for early years, short Apply notes with Why. Complete Agent Workbench steps. Do not invent fake URLs.",
-      "surface": "homework",
+      "sourceFeedback": "need connectivity between each and every task and also the homework as that is the very important part of the ai path builder , and dont leave any empty data have content rich data",
+      "surface": "daily",
       "tags": [
         "connectivity",
         "project"
       ],
       "active": true,
-      "hitCount": 4,
-      "updatedAt": "2026-08-18T10:24:29.598Z"
+      "hitCount": 23,
+      "updatedAt": "2026-10-23T09:51:23.031Z"
     },
     {
       "ruleKey": "feedback-483a4e573b0056ff",
@@ -36,8 +36,8 @@
         "slots"
       ],
       "active": true,
-      "hitCount": 70,
-      "updatedAt": "2026-09-21T04:59:46.547Z"
+      "hitCount": 105,
+      "updatedAt": "2026-10-23T09:51:23.107Z"
     },
     {
       "ruleKey": "baseline-no-fake-urls",
@@ -49,8 +49,8 @@
         "links"
       ],
       "active": true,
-      "hitCount": 70,
-      "updatedAt": "2026-09-21T04:59:46.591Z"
+      "hitCount": 105,
+      "updatedAt": "2026-10-23T09:51:23.145Z"
     },
     {
       "ruleKey": "baseline-leetcode-unique",
@@ -62,8 +62,8 @@
         "leetcode"
       ],
       "active": true,
-      "hitCount": 70,
-      "updatedAt": "2026-09-21T04:59:46.623Z"
+      "hitCount": 105,
+      "updatedAt": "2026-10-23T09:51:23.190Z"
     },
     {
       "ruleKey": "baseline-placement-rotation",
@@ -75,8 +75,8 @@
         "placement"
       ],
       "active": true,
-      "hitCount": 70,
-      "updatedAt": "2026-09-21T04:59:46.659Z"
+      "hitCount": 105,
+      "updatedAt": "2026-10-23T09:51:23.229Z"
     },
     {
       "ruleKey": "baseline-friday-review",
@@ -88,8 +88,8 @@
         "weekly"
       ],
       "active": true,
-      "hitCount": 70,
-      "updatedAt": "2026-09-21T04:59:46.692Z"
+      "hitCount": 105,
+      "updatedAt": "2026-10-23T09:51:23.280Z"
     },
     {
       "ruleKey": "baseline-full-connectivity",
@@ -102,8 +102,8 @@
         "project"
       ],
       "active": true,
-      "hitCount": 70,
-      "updatedAt": "2026-09-21T04:59:46.725Z"
+      "hitCount": 105,
+      "updatedAt": "2026-10-23T09:51:23.325Z"
     },
     {
       "ruleKey": "baseline-day-night-lc",
@@ -116,8 +116,8 @@
         "connectivity"
       ],
       "active": true,
-      "hitCount": 70,
-      "updatedAt": "2026-09-21T04:59:46.757Z"
+      "hitCount": 105,
+      "updatedAt": "2026-10-23T09:51:23.363Z"
     },
     {
       "ruleKey": "feedback-0cc7ade19529d296",
@@ -140,8 +140,8 @@
         "links"
       ],
       "active": true,
-      "hitCount": 3,
-      "updatedAt": "2026-08-18T10:24:29.550Z"
+      "hitCount": 6,
+      "updatedAt": "2026-10-10T09:44:21.610Z"
     },
     {
       "ruleKey": "feedback-ebc571ccf396d1b7",
@@ -152,8 +152,20 @@
         "feedback"
       ],
       "active": true,
-      "hitCount": 3,
-      "updatedAt": "2026-08-18T10:24:29.645Z"
+      "hitCount": 6,
+      "updatedAt": "2026-10-10T09:44:21.697Z"
+    },
+    {
+      "ruleKey": "feedback-09b00f39422065a1",
+      "rule": "Faculty feedback (obey forever on new plans + refine): need connectivity between each and every task and also the homework as that is the very important part of the ai path builder , and dont leave any empty data have content rich data",
+      "sourceFeedback": "need connectivity between each and every task and also the homework as that is the very important part of the ai path builder , and dont leave any empty data have content rich data",
+      "surface": "daily",
+      "tags": [
+        "feedback"
+      ],
+      "active": true,
+      "hitCount": 16,
+      "updatedAt": "2026-10-23T09:51:23.070Z"
     }
   ]
 }

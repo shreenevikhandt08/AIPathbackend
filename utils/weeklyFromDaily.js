@@ -205,24 +205,70 @@ function subjectOverviewBit(name, topic) {
   return `${n} — ${t}`;
 }
 
+const SKIP_LINE_RE =
+  /^(problem \(short\)|problem statement|your problem|deliverable|done when|connect|youtube|article|website|video|why|outcome|purpose|tip|links?|notes?)\s*:/i;
+
+/** Value of the first matching "Label: value" line (▶ optional). */
+function labeledLine(content, keys) {
+  const raw = String(content || "").replace(/\\n/g, "\n");
+  for (const key of keys) {
+    const m = raw.match(new RegExp(`(?:^|\\n)\\s*(?:[▶•·]\\s*)?${key}\\s*:\\s*([^\\n]+)`, "i"));
+    if (m && m[1].trim()) return m[1].trim().replace(/^["'“]|["'”]$/g, "");
+  }
+  return "";
+}
+
+function firstContentLine(content) {
+  for (const raw of String(content || "").replace(/\\n/g, "\n").split("\n")) {
+    const l = raw.replace(/^[▶•·\-\s]+/, "").trim();
+    if (!l || l.length < 4 || /^https?:\/\//i.test(l) || SKIP_LINE_RE.test(l)) continue;
+    return l.replace(/^(heading|learn today|learn|subject|topic|concept|stage|step|task)\s*:\s*/i, "");
+  }
+  return "";
+}
+
 function extractLearnTopic(content) {
-  const text = String(content || "");
-  const learn =
-    text.match(/▶\s*Concept:\s*(.+)/i) ||
-    text.match(/▶\s*One topic today:\s*([^\n]+)/i) ||
-    text.match(/▶\s*Learn(?:\s*Day\s*\d+)?:\s*([^\n]+)/i) ||
-    text.match(/▶\s*Learn today:\s*([^\n]+)/i) ||
-    text.match(/▶\s*Heading:\s*(?:Deepen\s*[—–-]?\s*)?([^\n]+)/i);
-  return learn ? cleanTopic(learn[1]) : "";
+  const hit =
+    labeledLine(content, [
+      "Concept",
+      "One topic today",
+      "Learn today",
+      "What to Learn",
+      "Topic",
+      "Learn(?:\\s*Day\\s*\\d+)?",
+      "Heading",
+      "Subject",
+    ]) || firstContentLine(content);
+  return hit ? cleanTopic(hit.replace(/^Deepen\s*[—–-]?\s*/i, "")) : "";
 }
 
 function extractDtStep(content) {
-  const text = String(content || "");
-  const step =
-    text.match(/▶\s*DT Playbook Step:\s*([^\n]+)/i) ||
-    text.match(/▶\s*Related DT Playbook Step:\s*([^\n]+)/i) ||
-    text.match(/▶\s*Related DT Step:\s*([^\n]+)/i);
-  return step ? cleanTopic(step[1], 80) : "";
+  const hit = labeledLine(content, [
+    "DT Playbook Step",
+    "Related DT Playbook Step",
+    "Related DT Step",
+    "Step",
+  ]);
+  if (hit) return cleanTopic(hit, 80);
+  const page = String(content || "").match(/DT Playbook page\s+\d+\s*[—–-]\s*["“]([^"”]+)["”]/i);
+  return page ? cleanTopic(page[1], 80) : "";
+}
+
+function playbookStepByName(name) {
+  const n = String(name || "").toLowerCase().trim();
+  if (!n) return null;
+  const { DT_PLAYBOOK } = require("./dtPlaybookStructure");
+  for (const w of DT_PLAYBOOK) {
+    for (const s of w.steps) {
+      if (String(s.step).toLowerCase() === n) return { ...s, stage: w.stage };
+    }
+  }
+  for (const w of DT_PLAYBOOK) {
+    for (const s of w.steps) {
+      if (n.includes(String(s.step).toLowerCase())) return { ...s, stage: w.stage };
+    }
+  }
+  return null;
 }
 
 function extractDtPage(content) {
@@ -231,36 +277,44 @@ function extractDtPage(content) {
 }
 
 function extractProjectTask(content) {
-  const text = String(content || "");
-  const task =
-    text.match(/▶\s*Today'?s project task[^:]*:\s*([^\n]+)/i) ||
-    text.match(/▶\s*Real Project Task[^:]*:\s*([^\n]+)/i) ||
-    text.match(/▶\s*Heading:\s*Project Build[^\n]*—\s*([^\n]+)/i) ||
-    text.match(/▶\s*Heading:\s*([^\n]+)/i);
-  return task ? cleanMilestonePoint(task[1]) : "";
+  const hit = labeledLine(content, [
+    "Today'?s project task[^:]*",
+    "Real Project Task[^:]*",
+    "Task",
+    "Do this",
+    "Build",
+    "Heading",
+  ]);
+  return hit ? cleanMilestonePoint(hit.replace(/^Project Build[^—]*—\s*/i, "")) : "";
 }
 
 function extractDoneWhen(content) {
-  const m = String(content || "").match(/▶\s*Done when:\s*([^\n]+)/i);
-  return m ? softClipAtWord(m[1].replace(/^▶\s*/, ""), 140) : "";
+  const hit = labeledLine(content, ["Deliverable", "Done when"]);
+  return hit ? softClipAtWord(hit, 140) : "";
 }
 
 function extractSdTitle(content) {
-  const text = String(content || "");
-  const sd =
-    text.match(/▶\s*Heading:\s*([^\n]+)/i) ||
-    text.match(/▶\s*Lesson\s*\d+:\s*([^\n]+)/i) ||
-    text.match(/▶\s*Topic(?:\s*Day\s*\d+)?:\s*([^\n]+)/i) ||
-    text.match(/▶\s*Learn:\s*([^\n]+)/i);
-  return sd ? cleanTopic(sd[1], 100) : "";
+  const hit =
+    labeledLine(content, [
+      "Component",
+      "Concept",
+      "What to Learn",
+      "Heading",
+      "Lesson\\s*\\d+",
+      "Topic(?:\\s*Day\\s*\\d+)?",
+      "Learn",
+    ]) || firstContentLine(content);
+  return hit ? cleanTopic(hit, 100) : "";
 }
 
 function extractDsaTitle(content) {
   const text = String(content || "");
-  const dsa =
-    text.match(/▶\s*Heading:\s*([^\n]+)/i) ||
-    text.match(/▶\s*DSA(?:\s*Day\s*\d+)?:\s*([^\n]+)/i);
-  return dsa ? cleanTopic(dsa[1], 100) : "";
+  const lc = text.match(/LeetCode\s*#\s*(\d+)\s*[—–-]\s*([^\n(]+)/i);
+  if (lc) return `LeetCode #${lc[1]} ${cleanTopic(lc[2], 50)}`;
+  const hit =
+    labeledLine(content, ["Pattern", "Problem name", "Practice", "Heading", "DSA(?:\\s*Day\\s*\\d+)?", "Concept", "Topic"]) ||
+    firstContentLine(content);
+  return hit ? cleanTopic(hit, 100) : "";
 }
 
 function extractPlacementFocus(content) {
@@ -291,14 +345,18 @@ function extractPlacementFocus(content) {
 }
 
 function extractHomeworkMustDo(content) {
-  const text = String(content || "");
+  const text = String(content || "").replace(/\\n/g, "\n");
   const out = [];
-  const lc = text.match(/LeetCode[\s\S]{0,80}?#(\d+)\s*[—–-]\s*([^\n(]+)/i);
-  if (lc) out.push(`LeetCode #${lc[1]} — ${cleanTopic(lc[2], 60)}`);
-  const agent = text.match(/Agent Workbench\n([^\n]+)/i);
-  if (agent) out.push(`Agent: ${cleanTopic(agent[1], 70)}`);
-  const cs = text.match(/Case Study\n([^\n]+)/i);
-  if (cs) out.push(`Case study: ${cleanTopic(cs[1], 70)}`);
+  const lc = text.match(/LeetCode[\s\S]{0,120}?#\s*(\d+)\s*[—–-]\s*([^\n(]+)/i);
+  const ex = text.match(/(?:^|\n)Exercism\n([^\n]+)/i);
+  if (lc) out.push(`LeetCode #${lc[1]} ${cleanTopic(lc[2], 50)}`);
+  else if (ex) out.push(`Exercism: ${cleanTopic(ex[1], 50)}`);
+  const agent = text.match(/(?:^|\n)Agent Workbench\n([^\n]+)/i);
+  const okr = text.match(/(?:^|\n)LinkedIn\n([^\n]+)/i);
+  if (agent) out.push(`Agent Workbench: ${cleanTopic(agent[1].replace(/^SNS Agent Workbench\s*[—–-]\s*/i, ""), 60)}`);
+  else if (okr) out.push(`OKRion: ${cleanTopic(okr[1], 60)}`);
+  const cs = text.match(/(?:^|\n)\s*Case:\s*([^\n[]+)/i) || text.match(/Case Study\n([^\n]+)/i);
+  if (cs) out.push(`Case: ${cleanTopic(cs[1], 60)}`);
   return out;
 }
 
@@ -538,6 +596,26 @@ function buildMilestonePoints(bucket, theme) {
   return goal ? [goal] : ["Finish this week's Project Build deliverable (see daily)."];
 }
 
+const DAY_ORDER = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+const DAY_SHORT = { Monday: "Mon", Tuesday: "Tue", Wednesday: "Wed", Thursday: "Thu", Friday: "Fri" };
+
+function sortedDays(bucket) {
+  return Object.entries(bucket.byDay || {})
+    .map(([name, d]) => ({ name, ...d }))
+    .sort((a, b) => DAY_ORDER.indexOf(a.name) - DAY_ORDER.indexOf(b.name));
+}
+
+/** "▶ Mon — …" per day; empty days are skipped. */
+function perDayLines(days, fn) {
+  return days
+    .map((d) => {
+      const body = fn(d);
+      return body ? `▶ ${DAY_SHORT[d.name] || d.name} — ${body}` : null;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
 /**
  * @param {Array} dailyRows
  * @param {object} opts - { themes, examAnalysis, inputs }
@@ -603,7 +681,14 @@ function buildWeeklyFromDailyRows(dailyRows, opts = {}) {
         b.sdTopics.push(sd);
         if (day) day.sd = sd;
       }
-    } else if (/project build|project push|implement/i.test(act)) {
+    } else if (/project build|project push|implement|dt playbook|product development/i.test(act)) {
+      const dt = extractDtStep(content);
+      if (dt) {
+        b.dtSteps.push(dt);
+        if (day && !day.dt) day.dt = dt;
+      }
+      const page = extractDtPage(content);
+      if (page && day && !day.dtPage) day.dtPage = page;
       const task = extractProjectTask(content);
       if (task) {
         b.projectDeliverables.push(task);
@@ -646,20 +731,64 @@ function buildWeeklyFromDailyRows(dailyRows, opts = {}) {
     }
   }
 
-  const columns = ["Week", "Days", "Subjects Covered", "Project Milestone", "Exam Focus"];
+  const columns = ["Week", "Days", "Subjects Covered", "Project Milestone", "Exam Focus", "Tonight's Homework"];
   const weekNums = [...byWeek.keys()].sort((a, b) => a - b);
 
   const rows = weekNums.map((week) => {
     const b = byWeek.get(week);
     const theme = themeForWeek(themes, week);
     const dayCount = b.dayIds.size || 5;
+    const days = sortedDays(b);
+
+    const subjects = perDayLines(days, (d) => {
+      const bits = [];
+      if (d.learn) bits.push(softClipAtWord(d.learn, 60));
+      if (d.dsa) bits.push(`DSA: ${softClipAtWord(d.dsa, 40)}`);
+      if (d.sd) bits.push(`SD: ${softClipAtWord(d.sd, 40)}`);
+      if (!bits.length && d.dt) bits.push(`DT: ${d.dt}`);
+      return bits.join(" · ");
+    });
+
+    const milestone = perDayLines(days, (d) => {
+      const step = d.dt ? playbookStepByName(d.dt) : null;
+      const page = d.dtPage || step?.page || null;
+      const head = page ? `DT p.${page}${d.dt ? ` “${d.dt}”` : ""}` : d.dt ? `DT “${d.dt}”` : "";
+      const task = d.project ? softClipAtWord(d.project, 80) : "";
+      const del = d.projectDone ? ` → ${softClipAtWord(d.projectDone, 60)}` : "";
+      return [head, task].filter(Boolean).join(": ") + del;
+    });
+
+    const examQ = !flags.skipQuestions
+      ? examQuestionsForSubjects(
+          (!flags.skipSubjects && Array.isArray(theme?.subjects) ? theme.subjects : [])
+            .map((s) => s.name)
+            .filter(Boolean),
+          examAnalysis,
+          2
+        )
+      : [];
+    const exam = [
+      perDayLines(days, (d) => {
+        const what = d.learn || d.dt || "";
+        const bits = [];
+        if (what) bits.push(`explain “${softClipAtWord(what, 45)}” with an example from your project`);
+        if (d.dsa) bits.push(`re-solve ${softClipAtWord(d.dsa, 30)}`);
+        return bits.join("; ");
+      }),
+      bullets(examQ),
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const homework = perDayLines(days, (d) => (d.homework.length ? d.homework.join(" · ") : ""));
 
     return [
       `Week ${week}`,
       `${dayCount} working days`,
-      bullets(buildSubjectsCovered(b, theme, flags)),
-      bullets(buildMilestonePoints(b, theme)),
-      bullets(buildExamFocus(b, theme, flags, examAnalysis)),
+      subjects || bullets(buildSubjectsCovered(b, theme, flags)),
+      milestone || bullets(buildMilestonePoints(b, theme)),
+      exam || bullets(buildExamFocus(b, theme, flags, examAnalysis)),
+      homework || "—",
     ];
   });
 

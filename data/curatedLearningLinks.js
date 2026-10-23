@@ -207,10 +207,9 @@ function gfgGuideForPattern(pattern = "") {
     return hit(null, "GFG — Arrays", "https://www.geeksforgeeks.org/array-data-structure/");
   }
 
-  const q = encodeURIComponent(String(pattern || "data structures").trim().slice(0, 80) || "data structures");
   return {
-    title: `GFG search — ${String(pattern || "DSA").trim().slice(0, 40)}`,
-    url: `https://www.geeksforgeeks.org/?s=${q}`,
+    title: "GFG — Data Structures hub",
+    url: "https://www.geeksforgeeks.org/data-structures/",
   };
 }
 
@@ -238,8 +237,8 @@ const CURATED = [
       url: "https://www.nngroup.com/articles/competitive-usability-evaluations/",
     },
     youtube: {
-      title: "Competitive analysis basics (public)",
-      url: "https://www.youtube.com/watch?v=yAi5YHEnOwA",
+      title: "Strategyzer — Value Proposition Canvas Explained",
+      url: "https://www.youtube.com/watch?v=ReM1uqmVfP0",
     },
   },
   {
@@ -249,8 +248,8 @@ const CURATED = [
       url: "https://www.nngroup.com/articles/design-thinking/",
     },
     youtube: {
-      title: "Ideation / brainstorming for products (public)",
-      url: "https://www.youtube.com/watch?v=bMzqAqnMIF0",
+      title: "AJ&Smart — What Is Design Thinking? An Overview",
+      url: "https://www.youtube.com/watch?v=gHGN6hs2gZY",
     },
   },
   {
@@ -282,8 +281,8 @@ const CURATED = [
       url: "https://www.nngroup.com/articles/user-interviews/",
     },
     youtube: {
-      title: "User interview tips (public)",
-      url: "https://www.youtube.com/watch?v=QJ0a9E9u6bE",
+      title: "Google Ventures — Sprint Process in 90 Seconds",
+      url: "https://www.youtube.com/watch?v=K2vSQPh6MCE",
     },
   },
   {
@@ -293,8 +292,8 @@ const CURATED = [
       url: "https://www.nngroup.com/articles/journey-mapping-101/",
     },
     youtube: {
-      title: "Customer journey map explained (public)",
-      url: "https://www.youtube.com/watch?v=mSxpXUbTjYM",
+      title: "Sprouts — The Design Thinking Process",
+      url: "https://www.youtube.com/watch?v=_r0VX-aU_T8",
     },
   },
   {
@@ -404,8 +403,8 @@ const CURATED = [
       url: "https://www.geeksforgeeks.org/binary-tree-data-structure/",
     },
     youtube: {
-      title: "Binary trees intro",
-      url: "https://www.youtube.com/watch?v=H5JubkIy_p8",
+      title: "Data Structures: Trees · HackerRank",
+      url: "https://www.youtube.com/watch?v=oSWTXtMglKE",
     },
   },
   {
@@ -630,15 +629,15 @@ const CURATED = [
   },
 ];
 
-/** Safe default when topic doesn't match — still free & public. */
+/** Safe default when topic doesn't match — still free & public (watch?v= only). */
 const DEFAULT_PAIR = {
   web: {
     title: "freeCodeCamp — Learn to code (free curriculum)",
     url: "https://www.freecodecamp.org/learn/",
   },
   youtube: {
-    title: "freeCodeCamp — public playlists",
-    url: "https://www.youtube.com/@freecodecamp/playlists",
+    title: "freeCodeCamp — Learn to code (full course)",
+    url: "https://www.youtube.com/watch?v=zOjov-2OZ0E",
   },
   source: "curated-default",
 };
@@ -688,21 +687,23 @@ function rankedCuratedMatches(topic = "") {
 }
 
 /**
- * Exact-topic search pair when no curated row matches — links still teach THIS topic.
+ * Fallback when no curated row matches — real hubs only (never GFG ?s= or YT search).
  */
 function topicSearchPair(topic = "") {
   const label = String(topic || "today's topic").replace(/\s+/g, " ").trim().slice(0, 60) || "today's topic";
-  const q = encodeURIComponent(label);
+  const g = gfgGuideForPattern(label);
+  // Prefer a real GFG/MDN/FCC hub page; never geeksforgeeks.org/?s=
+  const web =
+    g?.url && !/geeksforgeeks\.org\/\?s=/i.test(g.url)
+      ? { title: g.title || `Articles for “${label}”`, url: g.url }
+      : { ...DEFAULT_PAIR.web, title: `${DEFAULT_PAIR.web.title} — for “${label}”` };
   return {
-    web: {
-      title: `Articles for “${label}” (GFG search)`,
-      url: `https://www.geeksforgeeks.org/?s=${q}`,
-    },
+    web,
     youtube: {
-      title: `Videos for “${label}” (YouTube search)`,
-      url: `https://www.youtube.com/results?search_query=${q}`,
+      title: `${DEFAULT_PAIR.youtube.title} — for “${label}”`,
+      url: DEFAULT_PAIR.youtube.url,
     },
-    source: "topic-search",
+    source: "topic-hub-fallback",
     topic: label,
   };
 }
@@ -887,15 +888,23 @@ function isWatchYoutube(url) {
   return /youtube\.com\/watch\?v=[\w-]{11}/i.test(u) || /youtu\.be\/[\w-]{11}/i.test(u);
 }
 
-/** Public YouTube: watch video OR public playlist OR topic search OR freeCodeCamp playlists hub. */
+/**
+ * Public YouTube for Learning cells: watch?v=VIDEO_ID only.
+ * Never /results?search_query= (invented search pages are not allowed).
+ * Playlists / channel hubs are accepted only as non-learning fallbacks elsewhere.
+ */
 function isPublicYoutube(url) {
   const u = String(url || "");
+  if (/youtube\.com\/results\?search_query=/i.test(u)) return false;
   if (isWatchYoutube(u)) return true;
   if (/youtube\.com\/playlist\?list=[\w-]+/i.test(u)) return true;
   if (/youtube\.com\/@freecodecamp\/playlists\/?(\?.*)?$/i.test(u)) return true;
-  // Topic-aligned fallback — student searches the exact learning label
-  if (/youtube\.com\/results\?search_query=/i.test(u)) return true;
   return false;
+}
+
+/** Strict Learning-cell YouTube: watch?v= only. */
+function isWatchYoutubeStrict(url) {
+  return /youtube\.com\/watch\?v=[\w-]{11}/i.test(String(url || ""));
 }
 
 /**
@@ -935,6 +944,13 @@ function sanitizeResourcePair(pair, topic, emergencyFallbackFn) {
     }
   }
   if (!ytOk) youtube = fb.youtube;
+  // Learning cells require watch?v= — never search or bare channel hubs
+  if (!isWatchYoutubeStrict(youtube.url)) {
+    youtube = fb.youtube?.url && isWatchYoutubeStrict(fb.youtube.url) ? fb.youtube : DEFAULT_PAIR.youtube;
+  }
+  if (/geeksforgeeks\.org\/\?s=/i.test(String(web.url || "")) || /\/search\?/i.test(String(web.url || ""))) {
+    web = fb.web?.url && !/geeksforgeeks\.org\/\?s=/i.test(fb.web.url) ? fb.web : DEFAULT_PAIR.web;
+  }
 
   return {
     web: { title: web.title || fb.web.title, url: web.url || fb.web.url },
@@ -964,6 +980,7 @@ module.exports = {
   isBlockedUrl,
   isAllowedHost,
   isWatchYoutube,
+  isWatchYoutubeStrict,
   isPublicYoutube,
   isSafeFreeCodeCampUrl,
   isSafeGfgUrl,

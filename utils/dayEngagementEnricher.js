@@ -363,7 +363,14 @@ function enrichObjectRows(rows, dayIdx, memberIdx = 0, opts = {}) {
     ensureAfternoonClose(out, picks);
   }
 
-  out = out.map((r) => sanitizeLearningRow(r));
+  out = out.map((r) =>
+    sanitizeLearningRow(r, {
+      inputs: opts.inputs || {},
+      requireLearningLinks: true,
+      topic: opts.topic || "",
+      dayIdx: Number(opts.dayIdx) || 0,
+    })
+  );
 
   // SNS Agent Workbench — enrich content, but do not rewrite custom slot times
   if (picks.agentWorkbench || out.some((r) => r.activity === "Agent Workbench")) {
@@ -541,7 +548,13 @@ function enrichArrayRows(allRows, inputs = {}) {
       });
     }
 
-    enriched = enriched.map((r) => sanitizeLearningRow(r));
+    enriched = enriched.map((r) =>
+      sanitizeLearningRow(r, {
+        inputs,
+        requireLearningLinks: true,
+        dayIdx,
+      })
+    );
 
     enriched.forEach((r) => {
       out.push([g.dayKey, r.time, r.activity, r.content]);

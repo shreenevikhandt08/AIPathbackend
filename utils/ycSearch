@@ -1,8 +1,78 @@
 const axios = require("axios");
 const ONLINE_MODEL = "openai/gpt-4o-mini:online";
+const LIVE_CACHE_TTL_MS = Math.max(30_000, Number(process.env.YC_LIVE_CACHE_TTL_MS || 10 * 60 * 1000));
 
 /** Live search cache keyed by date + filter window */
 const liveCache = {};
+
+function normalizeOpts(opts = {}) {
+  const mode = String(opts.mode || "all").toLowerCase();
+  const kind = String(opts.kind || "all").toLowerCase();
+  const year = opts.year != null && opts.year !== "" ? Number(opts.year) : null;
+  const month = opts.month != null && opts.month !== "" ? Number(opts.month) : null;
+  const window = String(opts.window || "recent").toLowerCase();
+  return {
+    mode: ["live", "classic", "all"].includes(mode) ? mode : "all",
+    kind: ["yc", "unicorn", "all"].includes(kind) ? kind : "all",
+    year: Number.isFinite(year) ? year : null,
+    month: Number.isFinite(month) && month >= 1 && month <= 12 ? month : null,
+    window: ["recent", "month", "quarter", "year"].includes(window) ? window : "recent",
+  };
+}
+
+function normalizeSourceRow(row = {}, fallback = {}) {
+  return {
+    title: String(row.title || fallback.title || "").trim(),
+    source: String(row.source || fallback.source || "").trim(),
+    kind: String(row.kind || fallback.kind || "yc").toLowerCase() === "unicorn" ? "unicorn" : "yc",
+    year: row.year != null && row.year !== "" ? Number(row.year) : (fallback.year ?? null),
+    month: row.month != null && row.month !== "" ? Number(row.month) : (fallback.month ?? null),
+    batch: String(row.batch || fallback.batch || "").trim() || null,
+    isLive: row.isLive === true || fallback.isLive === true,
+    sourceUrl: String(row.sourceUrl || row.url || fallback.sourceUrl || "").trim(),
+    fetchedAt: row.fetchedAt || fallback.fetchedAt || null,
+    confidence: Number.isFinite(Number(row.confidence))
+      ? Math.max(0, Math.min(1, Number(row.confidence)))
+      : (Number.isFinite(Number(fallback.confidence)) ? Number(fallback.confidence) : 0.6),
+  };
+}
+
+function toItemDate(row) {
+  const year = Number(row?.year);
+  if (!Number.isFinite(year)) return null;
+  const month = Number(row?.month);
+  return new Date(Date.UTC(year, Number.isFinite(month) && month >= 1 && month <= 12 ? month - 1 : 0, 1));
+}
+
+function withinWindow(row, window) {
+  if (!window || window === "recent") return true;
+  const dt = toItemDate(row);
+  if (!dt) return false;
+  const now = new Date();
+  const floor = new Date(now);
+  if (window === "month") floor.setUTCMonth(floor.getUTCMonth() - 1);
+  else if (window === "quarter") floor.setUTCMonth(floor.getUTCMonth() - 3);
+  else if (window === "year") floor.setUTCFullYear(floor.getUTCFullYear() - 1);
+  return dt >= floor;
+}
+
+function applyFilters(rows = [], opts = {}) {
+  const { kind, year, month, window } = normalizeOpts(opts);
+  return (rows || []).filter((p) => {
+    if (kind === "yc" && p.kind !== "yc") return false;
+    if (kind === "unicorn" && p.kind !== "unicorn") return false;
+    if (year && Number(p.year) !== year) return false;
+    if (month && Number(p.month) !== month) return false;
+    if (!withinWindow(p, window)) return false;
+    return true;
+  });
+}
+
+function pickFallbackConfidence(row = {}) {
+  if (row.isLive) return 0.5;
+  if (String(row.kind || "") === "yc" || String(row.kind || "") === "unicorn") return 0.72;
+  return 0.35;
+}
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -100,33 +170,18 @@ function buildYearOptions() {
 }
 
 function cacheKey(opts = {}) {
-  const mode = opts.mode || "live";
-  const window = opts.window || "recent";
-  const year = opts.year || "any";
-  const month = opts.month || "any";
-  return `${todayKey()}|${mode}|${window}|${year}|${month}`;
+  const norm = normalizeOpts(opts);
+  const mode = norm.mode || "live";
+  const kind = norm.kind || "all";
+  const window = norm.window || "recent";
+  const year = norm.year || "any";
+  const month = norm.month || "any";
+  return `${mode}|${kind}|${window}|${year}|${month}`;
 }
 
 function filterClassic(opts = {}) {
-  const kind = String(opts.kind || "all").toLowerCase();
-  const year = opts.year != null && opts.year !== "" ? Number(opts.year) : null;
-  const month = opts.month != null && opts.month !== "" ? Number(opts.month) : null;
-
-  return CLASSIC_PROBLEMS.filter((p) => {
-    if (kind === "yc" && p.kind !== "yc") return false;
-    if (kind === "unicorn" && p.kind !== "unicorn") return false;
-    if (year && Number(p.year) !== year) return false;
-    if (month && Number(p.month) !== month) return false;
-    return true;
-  }).map((p) => ({
-    title: p.title,
-    source: p.source,
-    kind: p.kind,
-    year: p.year,
-    month: p.month || null,
-    batch: p.batch || null,
-    isLive: false,
-  }));
+  const rows = CLASSIC_PROBLEMS.map((p) => normalizeSourceRow(p, { isLive: false, confidence: 0.72 }));
+  return applyFilters(rows, opts);
 }
 
 function windowPrompt(window, year, month) {
@@ -173,7 +228,7 @@ Each idea must be INSPIRED BY a real company — name the company/batch/year in 
 Return ONLY this JSON, no markdown, no commentary:
 {
   "problems": [
-    { "title": "short problem statement, startup-style, <18 words", "source": "Company · YC batch or Unicorn · year", "kind": "yc|unicorn", "year": 2024 }
+    { "title": "short problem statement, startup-style, <18 words", "source": "Company · YC batch or Unicorn · year", "kind": "yc|unicorn", "year": 2024, "month": 6, "sourceUrl": "https://...", "confidence": 0.84 }
   ]
 }
 Return exactly 8 items.
@@ -211,14 +266,19 @@ Return exactly 8 items.
   const problems = Array.isArray(parsed.problems) ? parsed.problems : [];
   if (!problems.length) throw new Error("Empty problems array from search");
 
-  return problems.slice(0, 8).map((p) => ({
+  const fetchedAt = new Date().toISOString();
+  const rows = problems.slice(0, 8).map((p) => normalizeSourceRow({
     title: String(p.title || "").trim(),
     source: String(p.source || "web search").trim(),
     kind: /unicorn/i.test(String(p.kind || p.source || "")) ? "unicorn" : "yc",
     year: p.year != null ? Number(p.year) : null,
-    month: null,
+    month: p.month != null ? Number(p.month) : null,
     isLive: true,
+    sourceUrl: p.sourceUrl || p.url || "",
+    fetchedAt,
+    confidence: Number.isFinite(Number(p.confidence)) ? Number(p.confidence) : 0.8,
   }));
+  return applyFilters(rows, opts);
 }
 
 /**
@@ -226,32 +286,36 @@ Return exactly 8 items.
  * @param {{ mode?: 'live'|'classic'|'all', kind?: 'yc'|'unicorn'|'all', year?: number|null, month?: number|null, window?: string }} opts
  */
 async function getYCUnicornProblems(forceRefresh = false, opts = {}) {
-  const mode = String(opts.mode || "all").toLowerCase();
-  const kind = String(opts.kind || "all").toLowerCase();
-  const year = opts.year != null && opts.year !== "" ? Number(opts.year) : null;
-  const month = opts.month != null && opts.month !== "" ? Number(opts.month) : null;
-  const window = opts.window || "recent";
+  const { mode, kind, year, month, window } = normalizeOpts(opts);
   const key = todayKey();
 
-  const classic = filterClassic({ kind, year, month });
+  const classic = filterClassic({ kind, year, month, window });
   const years = buildYearOptions();
 
   // Classic-only: no live call
   if (mode === "classic") {
-    const data = classic.length ? classic.slice(0, 16) : CLASSIC_PROBLEMS.slice(0, 12).map((p) => ({
-      title: p.title, source: p.source, kind: p.kind, year: p.year, month: p.month, isLive: false,
+    const fallbackClassic = applyFilters(
+      CLASSIC_PROBLEMS.slice(0, 12).map((p) => normalizeSourceRow(p, { isLive: false, confidence: 0.72 })),
+      { kind, year, month, window }
+    );
+    const data = (classic.length ? classic : fallbackClassic).slice(0, 16).map((p) => normalizeSourceRow(p, {
+      fetchedAt: key,
+      confidence: p.confidence ?? 0.72,
     }));
     return {
       data,
       isLive: false,
       generatedDate: key,
       cached: false,
+      staleCacheUsed: false,
       mode: "classic",
       kind,
       year,
       month,
+      window,
       years,
       classicCount: CLASSIC_PROBLEMS.length,
+      ttlMs: LIVE_CACHE_TTL_MS,
     };
   }
 
@@ -261,21 +325,52 @@ async function getYCUnicornProblems(forceRefresh = false, opts = {}) {
   let isLive = false;
   let cached = false;
 
-  if (!forceRefresh && liveCache[cKey]) {
-    live = liveCache[cKey].data;
-    isLive = liveCache[cKey].isLive;
+  const cacheEntry = liveCache[cKey];
+  const now = Date.now();
+  const cacheFresh = Boolean(cacheEntry && cacheEntry.expiresAt > now);
+
+  if (!forceRefresh && cacheFresh) {
+    live = cacheEntry.data;
+    isLive = cacheEntry.isLive;
     cached = true;
   } else {
     try {
       live = await searchLiveProblems({ window, year, month, kind });
-      liveCache[cKey] = { data: live, isLive: true };
+      liveCache[cKey] = {
+        data: live,
+        isLive: true,
+        fetchedAt: new Date().toISOString(),
+        expiresAt: now + LIVE_CACHE_TTL_MS,
+      };
       isLive = true;
     } catch (err) {
       console.error("ycSearch live fetch failed:", err.message);
-      live = FALLBACK_PROBLEMS;
-      isLive = false;
+      if (cacheEntry && Array.isArray(cacheEntry.data) && cacheEntry.data.length) {
+        live = cacheEntry.data;
+        isLive = cacheEntry.isLive;
+        cached = true;
+      } else {
+        const fallbackAt = new Date().toISOString();
+        live = applyFilters(
+          FALLBACK_PROBLEMS.map((p) => normalizeSourceRow(p, {
+            isLive: false,
+            fetchedAt: fallbackAt,
+            confidence: pickFallbackConfidence(p),
+          })),
+          { kind, year, month, window }
+        );
+        isLive = false;
+      }
     }
   }
+
+  live = applyFilters(
+    (live || []).map((p) => normalizeSourceRow(p, {
+      fetchedAt: p?.fetchedAt || cacheEntry?.fetchedAt || key,
+      confidence: p?.confidence,
+    })),
+    { kind, year, month, window }
+  );
 
   let data;
   if (mode === "live") {
@@ -298,6 +393,7 @@ async function getYCUnicornProblems(forceRefresh = false, opts = {}) {
     isLive,
     generatedDate: key,
     cached,
+    staleCacheUsed: cached && !cacheFresh,
     mode,
     kind,
     year,
@@ -305,6 +401,7 @@ async function getYCUnicornProblems(forceRefresh = false, opts = {}) {
     window,
     years,
     classicCount: CLASSIC_PROBLEMS.length,
+    ttlMs: LIVE_CACHE_TTL_MS,
   };
 }
 

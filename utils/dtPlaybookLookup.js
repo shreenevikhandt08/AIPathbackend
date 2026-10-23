@@ -113,19 +113,174 @@ function resolveStageOverride(globalDayIndex0Based, activeStageKey, productPlanO
   };
 }
 
+/**
+ * Parse _dtPlaybookMap — per-day Stage/Step overrides from the FE.
+ * Shapes supported:
+ *   [{ day: 1, stage, step, whatToLearn, realProjectTask, discussionPrompt, ... }]
+ *   { "1": { stage, step, ... }, "2": { ... } }
+ *   { days: [ ... ] }
+ * Never ignore this for a generic empathize-only plan when present.
+ */
+function parseDtPlaybookMap(inputs = {}) {
+  const raw =
+    inputs?._dtPlaybookMap ??
+    inputs?.dtPlaybookMap ??
+    null;
+  if (raw == null || raw === "") return null;
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+
+  const byDay = {};
+  const push = (dayNum, row) => {
+    const d = Math.max(1, Number(dayNum) || 0);
+    if (!d || !row || typeof row !== "object") return;
+    byDay[String(d)] = row;
+  };
+
+  if (Array.isArray(parsed)) {
+    parsed.forEach((row, i) => {
+      const day =
+        row.day ??
+        row.dayIndex ??
+        row.planDay ??
+        row.dayNumber ??
+        row.n ??
+        i + 1;
+      push(day, row);
+    });
+  } else if (Array.isArray(parsed.days)) {
+    parsed.days.forEach((row, i) => {
+      const day = row?.day ?? row?.dayIndex ?? row?.planDay ?? i + 1;
+      push(day, row);
+    });
+  } else {
+    Object.entries(parsed).forEach(([k, row]) => {
+      if (k === "days" || k === "meta") return;
+      if (/^\d+$/.test(String(k))) push(k, row);
+    });
+  }
+
+  return Object.keys(byDay).length ? byDay : null;
+}
+
+function stepFromMapRow(row, globalDayIndex0Based, fallbackStep = null) {
+  if (!row || typeof row !== "object") return null;
+  const stage =
+    String(row.stage || row.stageName || row.dtStage || "").trim() ||
+    (fallbackStep && fallbackStep.stage) ||
+    "";
+  const stepName =
+    String(row.step || row.stepName || row.title || "").trim() ||
+    (fallbackStep && fallbackStep.step) ||
+    "";
+  if (!stage && !stepName && !fallbackStep) return null;
+
+  // If only a stageKey is provided, resolve via playbook offset for that stage
+  const stageKey = String(row.stageKey || row.stage_key || "").trim().toLowerCase();
+  if (stageKey && !stepName) {
+    const offset = getWorkingDayOffsetForStage(stageKey);
+    const into = Math.max(0, Number(row.intoDay ?? row.dayInStage ?? 0));
+    const fromMap = getStepByWorkingDayIndex(offset + into);
+    if (fromMap) {
+      return {
+        ...fromMap,
+        planDayNumber: Number(globalDayIndex0Based || 0) + 1,
+        playbookWorkingDay: offset + into,
+        activeStageKey: stageKey,
+        stageOffset: offset,
+        productGoal: String(row.goal || row.note || "").trim(),
+        fromDtPlaybookMap: true,
+        whatToLearn: String(row.whatToLearn || fromMap.whatToLearn || "").trim(),
+        realProjectTask: String(row.realProjectTask || fromMap.realProjectTask || "").trim(),
+        discussionPrompt: String(row.discussionPrompt || fromMap.discussionPrompt || "").trim(),
+      };
+    }
+  }
+
+  let base = fallbackStep || {};
+  if (stepName) {
+    const named = flattenPlaybookSteps().find(
+      (s) => String(s.step).toLowerCase() === stepName.toLowerCase()
+    );
+    if (named && named.step !== base.step) base = { ...base, ...named };
+  }
+  return {
+    ...base,
+    weekNumber: Number(row.weekNumber || row.week || base.weekNumber) || base.weekNumber || 1,
+    stage: stage || base.stage || "Build",
+    stageGoal: String(row.stageGoal || row.goal || base.stageGoal || "").trim(),
+    step: stepName || base.step || "Applied build",
+    whatToLearn: String(row.whatToLearn || row.learn || base.whatToLearn || "").trim(),
+    realProjectTask: String(
+      row.realProjectTask || row.task || base.realProjectTask || ""
+    ).trim(),
+    discussionPrompt: String(
+      row.discussionPrompt || row.discussion || base.discussionPrompt || ""
+    ).trim(),
+    dsaConcept: row.dsaConcept != null ? row.dsaConcept : base.dsaConcept,
+    page: row.page != null ? row.page : base.page,
+    planDayNumber: Number(globalDayIndex0Based || 0) + 1,
+    playbookWorkingDay: Number(row.playbookWorkingDay || base.playbookWorkingDay) || null,
+    activeStageKey: stageKey || base.activeStageKey || null,
+    productGoal: String(row.goal || row.note || base.productGoal || "").trim(),
+    fromDtPlaybookMap: true,
+  };
+}
+
+/**
+ * Resolve DT step for a plan day.
+ * Priority: _dtPlaybookMap (per day) → _productStagePlan / stage block → playbook walk.
+ */
 function getStepForPlanDay(globalDayIndex0Based, activeStageKey, productPlanOrInputs) {
-  const override = resolveStageOverride(globalDayIndex0Based, activeStageKey, productPlanOrInputs);
+  const inputs =
+    productPlanOrInputs && typeof productPlanOrInputs === "object"
+      ? productPlanOrInputs
+      : {};
+  const planDay = Number(globalDayIndex0Based || 0) + 1;
+
+  // 1) Explicit per-day map wins — do not fall back to empathize-only generic
+  const map = parseDtPlaybookMap(inputs);
+  if (map) {
+    const row = map[String(planDay)] || map[String(globalDayIndex0Based)] || null;
+    if (row) {
+      // Use playbook walk as soft fallback for missing fields only
+      const override = resolveStageOverride(globalDayIndex0Based, activeStageKey, inputs);
+      const offset = getWorkingDayOffsetForStage(override.stageKey || activeStageKey);
+      const workingDayIndex = offset + Number(override.into || 0);
+      const fallback = getStepByWorkingDayIndex(workingDayIndex);
+      const fromMap = stepFromMapRow(row, globalDayIndex0Based, fallback);
+      if (fromMap) return fromMap;
+    }
+  }
+
+  // 2) Existing product-stage plan / active stage walk
+  const override = resolveStageOverride(globalDayIndex0Based, activeStageKey, inputs);
   const offset = getWorkingDayOffsetForStage(override.stageKey);
   const workingDayIndex = offset + Number(override.into || 0);
   const step = getStepByWorkingDayIndex(workingDayIndex);
   if (!step) return null;
+
+  // Attach productStageBlock text as stageGoal hint when present and goal empty
+  let productGoal = override.goal || "";
+  if (!productGoal && inputs._productStageBlock) {
+    const block = String(inputs._productStageBlock || "").trim();
+    if (block) productGoal = block.slice(0, 240);
+  }
+
   return {
     ...step,
-    planDayNumber: Number(globalDayIndex0Based || 0) + 1,
+    planDayNumber: planDay,
     playbookWorkingDay: workingDayIndex,
     activeStageKey: override.stageKey || null,
     stageOffset: offset,
-    productGoal: override.goal || "",
+    productGoal,
   };
 }
 
@@ -247,6 +402,8 @@ module.exports = {
   getStepForPlanDay,
   getWorkingDayOffsetForStage,
   flattenPlaybookSteps,
+  parseDtPlaybookMap,
+  stepFromMapRow,
   UI_STAGE_MAP,
   buildDailyPrompt,
   formatPlaybookPageRef,

@@ -114,6 +114,34 @@ function flattenWeekRows(dayDocs) {
   return lines.join("\n");
 }
 
+const WEEKLY_COLUMNS = ["Week", "Days", "Subjects Covered", "Project Milestone", "Exam Focus", "Tonight's Homework"];
+
+/** Same week built deterministically from daily rows (per-day lines + Tonight's Homework). */
+function deterministicWeekRow(dayDocs, weekNum) {
+  try {
+    const { buildWeeklyFromDailyRows } = require("./weeklyFromDaily");
+    const rows = dayDocs.flatMap((d) =>
+      (d.rows || []).map((r) => (Array.isArray(r) ? [r[0] || d.dayId, r[1], r[2], r[3]] : r))
+    );
+    const plan = buildWeeklyFromDailyRows(rows, {});
+    const re = new RegExp(`^Week\\s*${weekNum}\\b`, "i");
+    return (plan.rows || []).find((r) => re.test(String(r[0]))) || null;
+  } catch (e) {
+    console.warn("[weeklySync] deterministic week row failed:", e.message);
+    return null;
+  }
+}
+
+/** LLM row + deterministic fallbacks; never drop Tonight's Homework or leave a blank cell. */
+function mergeWeekRow(llmRow, detRow) {
+  const out = [...llmRow];
+  for (let i = 0; i < WEEKLY_COLUMNS.length; i++) {
+    if (!String(out[i] || "").trim() && detRow && String(detRow[i] || "").trim()) out[i] = detRow[i];
+  }
+  if (detRow && String(detRow[5] || "").trim()) out[5] = detRow[5];
+  return out.slice(0, WEEKLY_COLUMNS.length).map((v) => (v == null ? "" : v));
+}
+
 // ── Build the LLM prompt that summarises a week's daily rows ─────────────────
 function buildWeeklySummaryPrompt(weekNum, flatContent, existingWeeklyRow, weekType, directProjectMilestone, directDsa, directExamFocus) {
   const examWeekNote = weekType !== "NORMAL"
@@ -212,13 +240,16 @@ async function syncWeeklyFromDaily(userId, weekNum) {
       examFocus = directExamFocus || existingWeekRow?.[4] || `${weekType} Exam Week — see daily plan for subject details`;
     }
 
-    const newRow = [
-      result.weekLabel       || `Week ${weekNum}`,
-      result.days            || "",
-      result.subjectsCovered || "",
-      projectMilestone,
-      examFocus,
-    ];
+    const newRow = mergeWeekRow(
+      [
+        result.weekLabel       || `Week ${weekNum}`,
+        result.days            || "",
+        result.subjectsCovered || "",
+        projectMilestone,
+        examFocus,
+      ],
+      deterministicWeekRow(dayDocs, weekNum)
+    );
 
     let updatedRows;
     const matchIdx = existingRows.findIndex(r =>
@@ -243,7 +274,7 @@ async function syncWeeklyFromDaily(userId, weekNum) {
           userId,
           module: "weekly",
           title: weeklyDoc?.title || "Weekly Plan",
-          columns: weeklyDoc?.columns || ["Week", "Days", "Subjects Covered", "Project Milestone", "Exam Focus"],
+          columns: WEEKLY_COLUMNS,
           rows: updatedRows,
           source: "daily-sync",
           lastSyncedAt: new Date(),
@@ -300,13 +331,18 @@ async function rebuildWeeklyFromAllDaily(userId, existingWeeklyPlan) {
           if (weekType !== "NORMAL" && (!examFocus.trim() || /^n\/a$/i.test(examFocus.trim()))) {
             examFocus = directExamFocus || existingWeekRow?.[4] || `${weekType} Exam Week`;
           }
-          newRows.push([
-            result.weekLabel || `Week ${weekNum}`,
-            result.days      || existingWeekRow?.[1] || "",
-            result.subjectsCovered || "",
-            projectMilestone,
-            examFocus,
-          ]);
+          newRows.push(
+            mergeWeekRow(
+              [
+                result.weekLabel || `Week ${weekNum}`,
+                result.days      || existingWeekRow?.[1] || "",
+                result.subjectsCovered || "",
+                projectMilestone,
+                examFocus,
+              ],
+              deterministicWeekRow(weekDocs, weekNum)
+            )
+          );
         } else {
           if (existingWeekRow) newRows.push(existingWeekRow);
         }
@@ -325,7 +361,7 @@ async function rebuildWeeklyFromAllDaily(userId, existingWeeklyPlan) {
           userId,
           module: "weekly",
           title: existingWeeklyPlan?.title || "Weekly Plan",
-          columns: existingWeeklyPlan?.columns || ["Week", "Days", "Subjects Covered", "Project Milestone", "Exam Focus"],
+          columns: WEEKLY_COLUMNS,
           rows: newRows,
           source: "daily-sync",
           lastSyncedAt: new Date(),

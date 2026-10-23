@@ -718,15 +718,16 @@ function repairIncompleteContent(content = "", topicHint = "today's topic") {
     // Mid-word / truncated quotes: "... pe…" or hanging ellipsis after a short stump
     if (/[A-Za-z]{1,4}(?:…|\.\.\.)(?:\s|[”"']|$)/.test(line) || /"[^"]{8,}[A-Za-z]{1,3}(?:…|\.\.\.)"/.test(line)) {
       line = line
-        .replace(/"[^"]*[A-Za-z]{1,4}(?:…|\.\.\.)"/g, `"your project problem"`)
-        .replace(/\b[A-Za-z]{1,4}(?:…|\.\.\.)(?=\s|[”"']|$)/g, topic);
+        .replace(/\s*\b[A-Za-z]{1,3}(?:…|\.\.\.)(?=["”'])/g, "")
+        .replace(/(?:…|\.\.\.)(?=\s+\S)/g, ",")
+        .replace(/\s*\b[A-Za-z]{1,3}(?:…|\.\.\.)\s*$/g, "");
       fixed += 1;
     }
     // Any remaining decorative ellipsis after an incomplete token — drop ellipsis, keep words
     if (/(?:…|\.\.\.)\s*$/.test(line) && !/\b(etc|and so on)\b/i.test(line)) {
       line = line.replace(/(?:…|\.\.\.)\s*$/, "").trim();
       if (/\b(the|a|an|to|for|with|and|or|of|in|on|at|by|pe|th|wh)\s*$/i.test(line)) {
-        line = `${line.replace(/\s+\S+$/, "").trim()} — finish this step for “${topic}”.`;
+        line = `${line.replace(/\s+\S+$/, "").trim()}.`;
       } else {
         line = `${line}.`;
       }

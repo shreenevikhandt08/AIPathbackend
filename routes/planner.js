@@ -10,6 +10,7 @@ router.post("/generate-all", generateAll);
 router.post("/refine",       refine);
 router.post("/polish",       polish);
 router.post("/calendar",     calendar);
+// upload.any() — fieldnames include problem, syllabus, … and manualPrompt (force override)
 router.post("/upload",       optionalAuth, upload.any(), uploadFiles);
 router.get("/uploads",       verifyToken, listMyUploads);
 
